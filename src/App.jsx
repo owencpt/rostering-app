@@ -26,6 +26,9 @@ const RosteringApp = () => {
   const [draggedStaff, setDraggedStaff] = useState(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [clockedIn, setClockedIn] = useState({});
+  const [showDurationPopup, setShowDurationPopup] = useState(false);
+  const [pendingShift, setPendingShift] = useState(null);
+  const [shiftDuration, setShiftDuration] = useState(8);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -46,21 +49,106 @@ const RosteringApp = () => {
     e.preventDefault();
     if (!draggedStaff) return;
 
-    const newShift = {
-      id: Date.now(),
+    // Create pending shift data and show duration popup
+    const dayIndex = weekDays.indexOf(day) + 2;
+    const dateString = `2025-09-${String(dayIndex).padStart(2, '0')}`;
+    
+    setPendingShift({
       staffId: draggedStaff.id,
-      date: `2025-09-${String(weekDays.indexOf(day) + 2).padStart(2, '0')}`,
+      staffName: draggedStaff.name,
+      date: dateString,
       startTime: timeSlot,
-      endTime: `${(parseInt(timeSlot) + 8).toString().padStart(2, '0')}:00`,
-      role: draggedStaff.role
-    };
-
-    setShifts([...shifts, newShift]);
+      role: draggedStaff.role,
+      day: day
+    });
+    
+    setShowDurationPopup(true);
     setDraggedStaff(null);
   };
 
-  const removeShift = (shiftId) => {
-    setShifts(shifts.filter(shift => shift.id !== shiftId));
+  const confirmShiftCreation = (duration) => {
+    if (!pendingShift) return;
+
+    const startHour = parseInt(pendingShift.startTime);
+    const endTime = startHour + duration;
+    const endHour = Math.floor(endTime);
+    const endMinutes = (endTime % 1) * 60;
+    const endTimeString = `${endHour.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`;
+
+    const newShift = {
+      id: Date.now(),
+      staffId: pendingShift.staffId,
+      date: pendingShift.date,
+      startTime: pendingShift.startTime,
+      endTime: endTimeString,
+      role: pendingShift.role
+    };
+
+    setShifts([...shifts, newShift]);
+    setShowDurationPopup(false);
+    setPendingShift(null);
+    setShiftDuration(8); // Reset to default
+  };
+
+  const removeStaffFromSlot = (staffId, date, timeSlot) => {
+    // Find the shift that covers this time slot
+    const currentSlot = parseFloat(timeSlot.replace(':', '.'));
+    
+    const affectedShift = shifts.find(shift => {
+      const shiftStart = parseFloat(shift.startTime.replace(':', '.'));
+      const shiftEnd = parseFloat(shift.endTime.replace(':', '.'));
+      
+      return shift.staffId === staffId && 
+             shift.date === date && 
+             currentSlot >= shiftStart && 
+             currentSlot < shiftEnd;
+    });
+
+    if (!affectedShift) return;
+
+    const shiftStart = parseFloat(affectedShift.startTime.replace(':', '.'));
+    const shiftEnd = parseFloat(affectedShift.endTime.replace(':', '.'));
+    
+    // Determine what portion to remove (full hour or check if it's a partial hour)
+    const nextSlot = currentSlot + 1;
+    const removeStart = Math.max(shiftStart, currentSlot);
+    const removeEnd = Math.min(shiftEnd, nextSlot);
+
+    // Remove the original shift
+    const newShifts = shifts.filter(shift => shift.id !== affectedShift.id);
+
+    // Create new shift segments if needed
+    const shiftsToAdd = [];
+
+    // Add shift before the removed portion (if any)
+    if (removeStart > shiftStart) {
+      const beforeEndHour = Math.floor(removeStart);
+      const beforeEndMinutes = (removeStart % 1) * 60;
+      shiftsToAdd.push({
+        id: Date.now() + Math.random(),
+        staffId: affectedShift.staffId,
+        date: affectedShift.date,
+        startTime: affectedShift.startTime,
+        endTime: `${beforeEndHour.toString().padStart(2, '0')}:${beforeEndMinutes.toString().padStart(2, '0')}`,
+        role: affectedShift.role
+      });
+    }
+
+    // Add shift after the removed portion (if any)
+    if (removeEnd < shiftEnd) {
+      const afterStartHour = Math.floor(removeEnd);
+      const afterStartMinutes = (removeEnd % 1) * 60;
+      shiftsToAdd.push({
+        id: Date.now() + Math.random() + 1,
+        staffId: affectedShift.staffId,
+        date: affectedShift.date,
+        startTime: `${afterStartHour.toString().padStart(2, '0')}:${afterStartMinutes.toString().padStart(2, '0')}`,
+        endTime: affectedShift.endTime,
+        role: affectedShift.role
+      });
+    }
+
+    setShifts([...newShifts, ...shiftsToAdd]);
   };
 
   const handleClockInOut = (staffId, action) => {
@@ -77,15 +165,167 @@ const RosteringApp = () => {
     const dayIndex = weekDays.indexOf(day) + 2;
     const dateString = `2025-09-${String(dayIndex).padStart(2, '0')}`;
     
-    return shifts.filter(shift => {
-      const shiftStart = parseInt(shift.startTime);
-      const shiftEnd = parseInt(shift.endTime);
-      const currentSlot = parseInt(timeSlot);
+    const parseTime = (timeStr) => {
+      const [hours, minutes] = timeStr.split(':').map(Number);
+      return hours + minutes / 60;
+    };
+    
+    const currentSlot = parseTime(timeSlot);
+    const nextSlot = currentSlot + 1;
+    
+    // Get all shifts that work during this time slot
+    const shiftsInSlot = shifts.filter(shift => {
+      const shiftStart = parseTime(shift.startTime);
+      const shiftEnd = parseTime(shift.endTime);
       
       return shift.date === dateString && 
              currentSlot >= shiftStart && 
              currentSlot < shiftEnd;
     });
+
+    // Separate full hour shifts from partial shifts
+    const fullHourShifts = [];
+    const partialShifts = [];
+    
+    shiftsInSlot.forEach(shift => {
+      const shiftStart = parseTime(shift.startTime);
+      const shiftEnd = parseTime(shift.endTime);
+      
+      const slotStart = Math.max(shiftStart, currentSlot);
+      const slotEnd = Math.min(shiftEnd, nextSlot);
+      const workDuration = slotEnd - slotStart;
+      
+      if (workDuration >= 1.0) {
+        fullHourShifts.push(shift);
+      } else {
+        partialShifts.push({ ...shift, workDuration });
+      }
+    });
+    
+    return { fullHourShifts, partialShifts, dateString };
+  };
+
+  const DurationPopup = () => {
+    if (!showDurationPopup || !pendingShift) return null;
+
+    const adjustDuration = (change) => {
+      setShiftDuration(prev => Math.max(0.5, Math.min(16, prev + change)));
+    };
+
+    const formatDuration = (hours) => {
+      const wholeHours = Math.floor(hours);
+      const minutes = (hours % 1) * 60;
+      if (minutes === 0) {
+        return `${wholeHours}h`;
+      } else {
+        return `${wholeHours}h ${minutes}m`;
+      }
+    };
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-semibold">Set Shift Duration</h3>
+            <button 
+              onClick={() => {
+                setShowDurationPopup(false);
+                setPendingShift(null);
+                setShiftDuration(8);
+              }}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          
+          <div className="mb-6">
+            <p className="text-gray-700 mb-2">
+              <strong>{pendingShift.staffName}</strong> - {pendingShift.role}
+            </p>
+            <p className="text-gray-600 text-sm">
+              {pendingShift.day}, starting at {pendingShift.startTime}
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <p className="text-sm font-medium text-gray-700">Shift Duration</p>
+            
+            {/* Duration Display and Controls */}
+            <div className="flex items-center justify-center space-x-4">
+              <button
+                onClick={() => adjustDuration(-1)}
+                className="w-10 h-10 bg-gray-200 hover:bg-gray-300 rounded-full flex items-center justify-center transition-colors"
+                disabled={shiftDuration <= 0.5}
+              >
+                <span className="text-lg font-bold">-</span>
+              </button>
+              
+              <button
+                onClick={() => adjustDuration(-0.5)}
+                className="w-8 h-8 bg-gray-100 hover:bg-gray-200 rounded-full flex items-center justify-center transition-colors text-sm"
+                disabled={shiftDuration <= 0.5}
+              >
+                ½
+              </button>
+              
+              <div className="bg-blue-50 border-2 border-blue-200 rounded-lg px-6 py-3 min-w-[100px] text-center">
+                <div className="text-2xl font-bold text-blue-700">
+                  {formatDuration(shiftDuration)}
+                </div>
+              </div>
+              
+              <button
+                onClick={() => adjustDuration(0.5)}
+                className="w-8 h-8 bg-gray-100 hover:bg-gray-200 rounded-full flex items-center justify-center transition-colors text-sm"
+                disabled={shiftDuration >= 16}
+              >
+                ½
+              </button>
+              
+              <button
+                onClick={() => adjustDuration(1)}
+                className="w-10 h-10 bg-gray-200 hover:bg-gray-300 rounded-full flex items-center justify-center transition-colors"
+                disabled={shiftDuration >= 16}
+              >
+                <span className="text-lg font-bold">+</span>
+              </button>
+            </div>
+            
+            <div className="text-center text-sm text-gray-500">
+              End time: {
+                (() => {
+                  const startHour = parseInt(pendingShift.startTime);
+                  const endTime = startHour + shiftDuration;
+                  const endHour = Math.floor(endTime);
+                  const endMinutes = (endTime % 1) * 60;
+                  return `${endHour.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`;
+                })()
+              }
+            </div>
+            
+            <div className="flex space-x-3 pt-4">
+              <button
+                onClick={() => {
+                  setShowDurationPopup(false);
+                  setPendingShift(null);
+                  setShiftDuration(8);
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => confirmShiftCreation(shiftDuration)}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+              >
+                Create Shift
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const AdminView = () => (
@@ -93,7 +333,7 @@ const RosteringApp = () => {
       <div className="max-w-7xl mx-auto">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Staff Roster Management</h1>
-          <p className="text-gray-600">Drag staff members to schedule shifts</p>
+          <p className="text-gray-600">Drag staff members to schedule shifts, then set duration</p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -131,10 +371,24 @@ const RosteringApp = () => {
           <div className="lg:col-span-3">
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
               <div className="p-6 border-b border-gray-200">
-                <h2 className="text-xl font-semibold flex items-center">
-                  <Calendar className="mr-2 h-5 w-5" />
-                  Weekly Schedule
-                </h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-semibold flex items-center">
+                    <Calendar className="mr-2 h-5 w-5" />
+                    Weekly Schedule
+                  </h2>
+                  
+                  {/* Color Legend */}
+                  <div className="flex items-center space-x-4 text-sm">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-4 h-4 bg-gradient-to-r from-blue-500 to-indigo-600 rounded"></div>
+                      <span className="text-gray-600">Full Hour (60+ min)</span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <div className="w-4 h-4 bg-gradient-to-r from-orange-400 to-red-500 rounded"></div>
+                      <span className="text-gray-600">Partial Hour (30 min)</span>
+                    </div>
+                  </div>
+                </div>
               </div>
               
               <div className="overflow-x-auto">
@@ -148,47 +402,96 @@ const RosteringApp = () => {
                   ))}
 
                   {/* Time slots */}
-                  {timeSlots.slice(6, 22).map(timeSlot => (
-                    <React.Fragment key={timeSlot}>
-                      <div className="p-3 bg-gray-50 text-sm font-medium border-r border-b border-gray-200">
-                        {timeSlot}
-                      </div>
-                      {weekDays.map(day => {
-                        const shiftsInSlot = getShiftsForTimeSlot(day, timeSlot);
-                        const cellHeight = Math.max(100, shiftsInSlot.length * 50 + 20); // Dynamic height based on number of shifts
-                        
-                        return (
-                          <div
-                            key={`${day}-${timeSlot}`}
-                            className="relative border-r border-b border-gray-200 hover:bg-blue-50 transition-colors"
-                            style={{ minHeight: `${cellHeight}px` }}
-                            onDragOver={handleDragOver}
-                            onDrop={(e) => handleDrop(e, day, timeSlot)}
-                          >
-                            {shiftsInSlot.length > 0 && (
-                              <div className="absolute inset-1 space-y-1 overflow-visible">
-                                {shiftsInSlot.map((shift, index) => {
-                                  const staffMember = staff.find(s => s.id === shift.staffId);
-                                  return (
-                                    <div key={shift.id} className="bg-gradient-to-r from-blue-500 to-indigo-600 rounded-md p-2 text-white text-xs relative">
-                                      <button
-                                        onClick={() => removeShift(shift.id)}
-                                        className="absolute top-1 right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600"
+                  {timeSlots.slice(6, 22).map(timeSlot => {
+                    // Calculate the maximum height needed for this entire row
+                    const rowHeight = Math.max(80, ...weekDays.map(day => {
+                      const { fullHourShifts, partialShifts } = getShiftsForTimeSlot(day, timeSlot);
+                      if (fullHourShifts.length > 0 || partialShifts.length > 0) {
+                        return (fullHourShifts.length * 20) + (partialShifts.length > 0 ? 30 : 0) + 40;
+                      }
+                      return 80;
+                    }));
+
+                    return (
+                      <React.Fragment key={timeSlot}>
+                        <div 
+                          className="p-3 bg-gray-50 text-sm font-medium border-r border-b border-gray-200 flex items-center"
+                          style={{ height: `${rowHeight}px` }}
+                        >
+                          {timeSlot}
+                        </div>
+                        {weekDays.map(day => {
+                          const { fullHourShifts, partialShifts, dateString } = getShiftsForTimeSlot(day, timeSlot);
+                          
+                          return (
+                            <div
+                              key={`${day}-${timeSlot}`}
+                              className="relative border-r border-b border-gray-200 hover:bg-blue-50 transition-colors"
+                              style={{ height: `${rowHeight}px` }}
+                              onDragOver={handleDragOver}
+                              onDrop={(e) => handleDrop(e, day, timeSlot)}
+                            >
+                            {/* Full Hour Shifts - Combined in one box */}
+                            {fullHourShifts.length > 0 && (
+                              <div className="absolute top-1 left-1 right-1 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-md p-2 text-white text-xs">
+                                <div className="space-y-1">
+                                  {fullHourShifts.map((shift, index) => {
+                                    const staffMember = staff.find(s => s.id === shift.staffId);
+                                    return (
+                                      <div key={shift.id} className="flex items-center justify-between">
+                                        <span className="font-semibold">{staffMember?.name}</span>
+                                        <button
+                                          onClick={() => removeStaffFromSlot(shift.staffId, dateString, timeSlot)}
+                                          className="w-3 h-3 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600 transition-colors flex-shrink-0"
+                                          title={`Remove ${staffMember?.name}`}
+                                        >
+                                          <X className="w-2 h-2" />
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                            
+                            {/* Partial Shifts - Combined in one box */}
+                            {partialShifts.length > 0 && (
+                              <div 
+                                className="absolute left-1 right-1 bg-gradient-to-r from-orange-400 to-red-500 rounded-md p-2 text-white text-xs"
+                                style={{ 
+                                  top: fullHourShifts.length > 0 
+                                    ? `${(fullHourShifts.length * 20) + 20}px` 
+                                    : '4px' 
+                                }}
+                              >
+                                <div className="space-y-1">
+                                  {partialShifts.map((shift) => {
+                                    const staffMember = staff.find(s => s.id === shift.staffId);
+                                    
+                                    return (
+                                      <div 
+                                        key={`${shift.id}-partial`}
+                                        className="flex items-center justify-between"
                                       >
-                                        <X className="w-2 h-2" />
-                                      </button>
-                                      <div className="font-semibold truncate pr-5">{staffMember?.name}</div>
-                                      <div className="opacity-80">{shift.startTime}-{shift.endTime}</div>
-                                    </div>
-                                  );
-                                })}
+                                        <span className="font-semibold">{staffMember?.name}</span>
+                                        <button
+                                          onClick={() => removeStaffFromSlot(shift.staffId, dateString, timeSlot)}
+                                          className="w-3 h-3 bg-red-600 rounded-full flex items-center justify-center hover:bg-red-700 transition-colors flex-shrink-0"
+                                          title="Remove this partial shift"
+                                        >
+                                          <X className="w-1.5 h-1.5" />
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
                               </div>
                             )}
                           </div>
                         );
                       })}
                     </React.Fragment>
-                  ))}
+                  )})}
                 </div>
               </div>
             </div>
@@ -486,6 +789,9 @@ const RosteringApp = () => {
 
       {/* Main Content */}
       {currentView === 'admin' ? <AdminView /> : <StaffView />}
+
+      {/* Duration Popup */}
+      <DurationPopup />
 
       {/* Add Staff Modal */}
       <AddStaffModal 
