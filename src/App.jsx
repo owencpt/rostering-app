@@ -1,34 +1,106 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Users, Plus, X, Play, Square, User, Settings, Home } from 'lucide-react';
+import { Calendar, Clock, Users, Plus, X, Play, Square, User, Settings, Home, ChevronLeft, ChevronRight } from 'lucide-react';
+import { staffService, shiftsService,subscriptions } from './lib/supabaseClient';
+import { supabase } from './lib/supabaseClient'; // make sure you have this
 
-// Mock data - replace with Supabase queries
-const mockStaff = [
-  { id: 1, name: 'Alice Johnson', role: 'Manager', email: 'alice@company.com', avatar: 'AJ' },
-  { id: 2, name: 'Bob Smith', role: 'Cashier', email: 'bob@company.com', avatar: 'BS' },
-  { id: 3, name: 'Carol Davis', role: 'Sales Assistant', email: 'carol@company.com', avatar: 'CD' },
-  { id: 4, name: 'David Wilson', role: 'Stock Manager', email: 'david@company.com', avatar: 'DW' },
-];
-
-const mockShifts = [
-  { id: 1, staffId: 1, date: '2025-09-02', startTime: '09:00', endTime: '17:00', role: 'Manager' },
-  { id: 2, staffId: 2, date: '2025-09-02', startTime: '10:00', endTime: '18:00', role: 'Cashier' },
-  { id: 3, staffId: 3, date: '2025-09-03', startTime: '08:00', endTime: '16:00', role: 'Sales Assistant' },
-];
 
 const timeSlots = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`);
 const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 const RosteringApp = () => {
+
+  const dataTransformers = {
+    staffToAppFormat: (row) => ({
+      id: row.id,
+      name: row.name,
+      role: row.role,
+      email: row.email,
+      avatar: row.avatar
+    }),
+    shiftToAppFormat: (row) => ({
+      id: row.id,
+      staffId: row.staff_id,
+      date: row.date,
+      startTime: row.start_time,
+      endTime: row.end_time,
+      role: row.role
+    })
+  };
+
+  // Helper functions for date management
+  const getWeekStart = (date) => {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is Sunday
+    return new Date(d.setDate(diff));
+  };
+
+  const formatDate = (date) => {
+    return date.toISOString().split('T')[0];
+  };
+
+  const getWeekDates = (weekStart) => {
+    return Array.from({ length: 7 }, (_, i) => {
+      const date = new Date(weekStart);
+      date.setDate(date.getDate() + i);
+      return date;
+    });
+  };
+
   const [currentView, setCurrentView] = useState('admin');
   const [selectedStaff, setSelectedStaff] = useState(null);
-  const [staff, setStaff] = useState(mockStaff);
-  const [shifts, setShifts] = useState(mockShifts);
+  const [staff, setStaff] = useState([]);
+  const [shifts, setShifts] = useState([]);
   const [draggedStaff, setDraggedStaff] = useState(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [clockedIn, setClockedIn] = useState({});
   const [showDurationPopup, setShowDurationPopup] = useState(false);
   const [pendingShift, setPendingShift] = useState(null);
-  const [shiftDuration, setShiftDuration] = useState(8);
+  const [shiftDuration, setShiftDuration] = useState(5);
+  const [currentWeekStart, setCurrentWeekStart] = useState(getWeekStart(new Date()));
+  const [serviceView, setServiceView] = useState('lunch'); // 'lunch' | 'dinner'
+  const slotRanges = {
+    lunch: [9, 14],   // 09:00 → 14:00
+    dinner: [16, 23], // 16:00 → 23:00
+  };
+
+  const [start, end] = slotRanges[serviceView];
+
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        // fetch staff + shifts for this week
+        const staffData = await staffService.getAllStaff();
+        setStaff(staffData.map(dataTransformers.staffToAppFormat));
+
+        const weekDates = getWeekDates(currentWeekStart);
+        const startDate = formatDate(weekDates[0]);
+        const endDate = formatDate(weekDates[6]);
+
+        const shiftData = await shiftsService.getShifts(startDate, endDate);
+        setShifts(shiftData.map(dataTransformers.shiftToAppFormat));
+      } catch (err) {
+        console.error("Error loading data:", err);
+      }
+    }
+
+    fetchData();
+
+    // 👇 use your subscription helper
+    const subscription = subscriptions.subscribeToShifts((payload) => {
+      console.log("Realtime shift update:", payload);
+      fetchData(); // reload when any shift is added/updated/deleted
+    });
+
+    // cleanup
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, [currentWeekStart]);
+
+
+  
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -45,13 +117,14 @@ const RosteringApp = () => {
     e.dataTransfer.dropEffect = 'move';
   };
 
-  const handleDrop = (e, day, timeSlot) => {
+  const handleDrop = (e, dayIndex, timeSlot) => {
     e.preventDefault();
     if (!draggedStaff) return;
 
-    // Create pending shift data and show duration popup
-    const dayIndex = weekDays.indexOf(day) + 2;
-    const dateString = `2025-09-${String(dayIndex).padStart(2, '0')}`;
+    // Get the actual date for this day
+    const weekDates = getWeekDates(currentWeekStart);
+    const selectedDate = weekDates[dayIndex];
+    const dateString = formatDate(selectedDate);
     
     setPendingShift({
       staffId: draggedStaff.id,
@@ -59,96 +132,65 @@ const RosteringApp = () => {
       date: dateString,
       startTime: timeSlot,
       role: draggedStaff.role,
-      day: day
+      day: weekDays[dayIndex]
     });
     
     setShowDurationPopup(true);
     setDraggedStaff(null);
   };
 
-  const confirmShiftCreation = (duration) => {
+  const confirmShiftCreation = async (duration) => {
     if (!pendingShift) return;
 
     const startHour = parseInt(pendingShift.startTime);
     const endTime = startHour + duration;
     const endHour = Math.floor(endTime);
     const endMinutes = (endTime % 1) * 60;
-    const endTimeString = `${endHour.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`;
+    const endTimeString = `${endHour.toString().padStart(2,'0')}:${Math.round(endMinutes).toString().padStart(2,'0')}`;
 
     const newShift = {
-      id: Date.now(),
-      staffId: pendingShift.staffId,
+      staff_id: pendingShift.staffId,
       date: pendingShift.date,
-      startTime: pendingShift.startTime,
-      endTime: endTimeString,
+      start_time: pendingShift.startTime,
+      end_time: endTimeString,
       role: pendingShift.role
     };
 
-    setShifts([...shifts, newShift]);
-    setShowDurationPopup(false);
-    setPendingShift(null);
-    setShiftDuration(8); // Reset to default
+    try {
+      const savedRow = await shiftsService.createShift(newShift);
+      const savedShift = dataTransformers.shiftToAppFormat(savedRow);
+      setShifts(prev => [...prev, savedShift]);
+    } catch (err) {
+      console.error("Error creating shift:", err);
+    } finally {
+      setShowDurationPopup(false);
+      setPendingShift(null);
+      setShiftDuration(8);
+    }
   };
 
-  const removeStaffFromSlot = (staffId, date, timeSlot) => {
-    // Find the shift that covers this time slot
-    const currentSlot = parseFloat(timeSlot.replace(':', '.'));
-    
+  const removeStaffFromSlot = async (staffId, date, timeSlot) => {
     const affectedShift = shifts.find(shift => {
       const shiftStart = parseFloat(shift.startTime.replace(':', '.'));
       const shiftEnd = parseFloat(shift.endTime.replace(':', '.'));
-      
-      return shift.staffId === staffId && 
-             shift.date === date && 
-             currentSlot >= shiftStart && 
-             currentSlot < shiftEnd;
+      const currentSlot = parseFloat(timeSlot.replace(':', '.'));
+
+      return (
+        shift.staffId === staffId &&
+        shift.date === date &&
+        currentSlot >= shiftStart &&
+        currentSlot < shiftEnd
+      );
     });
 
     if (!affectedShift) return;
 
-    const shiftStart = parseFloat(affectedShift.startTime.replace(':', '.'));
-    const shiftEnd = parseFloat(affectedShift.endTime.replace(':', '.'));
-    
-    // Determine what portion to remove (full hour or check if it's a partial hour)
-    const nextSlot = currentSlot + 1;
-    const removeStart = Math.max(shiftStart, currentSlot);
-    const removeEnd = Math.min(shiftEnd, nextSlot);
-
-    // Remove the original shift
-    const newShifts = shifts.filter(shift => shift.id !== affectedShift.id);
-
-    // Create new shift segments if needed
-    const shiftsToAdd = [];
-
-    // Add shift before the removed portion (if any)
-    if (removeStart > shiftStart) {
-      const beforeEndHour = Math.floor(removeStart);
-      const beforeEndMinutes = (removeStart % 1) * 60;
-      shiftsToAdd.push({
-        id: Date.now() + Math.random(),
-        staffId: affectedShift.staffId,
-        date: affectedShift.date,
-        startTime: affectedShift.startTime,
-        endTime: `${beforeEndHour.toString().padStart(2, '0')}:${beforeEndMinutes.toString().padStart(2, '0')}`,
-        role: affectedShift.role
-      });
+    try {
+      await shiftsService.deleteShift(affectedShift.id);
+      setShifts(prev => prev.filter(s => s.id !== affectedShift.id));
+    } catch (err) {
+      console.error("Error deleting shift:", err);
     }
-
-    // Add shift after the removed portion (if any)
-    if (removeEnd < shiftEnd) {
-      const afterStartHour = Math.floor(removeEnd);
-      const afterStartMinutes = (removeEnd % 1) * 60;
-      shiftsToAdd.push({
-        id: Date.now() + Math.random() + 1,
-        staffId: affectedShift.staffId,
-        date: affectedShift.date,
-        startTime: `${afterStartHour.toString().padStart(2, '0')}:${afterStartMinutes.toString().padStart(2, '0')}`,
-        endTime: affectedShift.endTime,
-        role: affectedShift.role
-      });
-    }
-
-    setShifts([...newShifts, ...shiftsToAdd]);
   };
 
   const handleClockInOut = (staffId, action) => {
@@ -161,9 +203,9 @@ const RosteringApp = () => {
     }));
   };
 
-  const getShiftsForTimeSlot = (day, timeSlot) => {
-    const dayIndex = weekDays.indexOf(day) + 2;
-    const dateString = `2025-09-${String(dayIndex).padStart(2, '0')}`;
+  const getShiftsForTimeSlot = (dayIndex, timeSlot) => {
+    const weekDates = getWeekDates(currentWeekStart);
+    const dateString = formatDate(weekDates[dayIndex]);
     
     const parseTime = (timeStr) => {
       const [hours, minutes] = timeStr.split(':').map(Number);
@@ -173,7 +215,6 @@ const RosteringApp = () => {
     const currentSlot = parseTime(timeSlot);
     const nextSlot = currentSlot + 1;
     
-    // Get all shifts that work during this time slot
     const shiftsInSlot = shifts.filter(shift => {
       const shiftStart = parseTime(shift.startTime);
       const shiftEnd = parseTime(shift.endTime);
@@ -183,7 +224,6 @@ const RosteringApp = () => {
              currentSlot < shiftEnd;
     });
 
-    // Separate full hour shifts from partial shifts
     const fullHourShifts = [];
     const partialShifts = [];
     
@@ -203,6 +243,16 @@ const RosteringApp = () => {
     });
     
     return { fullHourShifts, partialShifts, dateString };
+  };
+
+  const navigateWeek = (direction) => {
+    const newWeekStart = new Date(currentWeekStart);
+    newWeekStart.setDate(newWeekStart.getDate() + (direction * 7));
+    setCurrentWeekStart(newWeekStart);
+  };
+
+  const goToCurrentWeek = () => {
+    setCurrentWeekStart(getWeekStart(new Date()));
   };
 
   const DurationPopup = () => {
@@ -244,14 +294,13 @@ const RosteringApp = () => {
               <strong>{pendingShift.staffName}</strong> - {pendingShift.role}
             </p>
             <p className="text-gray-600 text-sm">
-              {pendingShift.day}, starting at {pendingShift.startTime}
+              {pendingShift.day}, {pendingShift.date}, starting at {pendingShift.startTime}
             </p>
           </div>
 
           <div className="space-y-4">
             <p className="text-sm font-medium text-gray-700">Shift Duration</p>
             
-            {/* Duration Display and Controls */}
             <div className="flex items-center justify-center space-x-4">
               <button
                 onClick={() => adjustDuration(-1)}
@@ -328,184 +377,275 @@ const RosteringApp = () => {
     );
   };
 
-  const AdminView = () => (
-    <div className="p-6 bg-gray-50 min-h-screen">
-      <div className="max-w-7xl mx-auto">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Staff Roster Management</h1>
-          <p className="text-gray-600">Drag staff members to schedule shifts, then set duration</p>
-        </div>
+  const AdminView = () => {
+    const weekDates = getWeekDates(currentWeekStart);
+    const today = new Date();
+    const isCurrentWeek = weekDates.some(date => 
+      date.toDateString() === today.toDateString()
+    );
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* Staff Panel */}
-          <div className="lg:col-span-1">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-              <h2 className="text-xl font-semibold mb-4 flex items-center">
-                <Users className="mr-2 h-5 w-5" />
-                Staff Members
-              </h2>
-              <div className="space-y-3">
-                {staff.map(member => (
-                  <div
-                    key={member.id}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, member)}
-                    className="p-3 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200 cursor-move hover:shadow-md transition-all duration-200 select-none"
-                  >
-                    <div className="flex items-center">
-                      <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-semibold mr-3">
-                        {member.avatar}
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-900">{member.name}</p>
-                        <p className="text-sm text-gray-600">{member.role}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+    return (
+      <div className="p-6 bg-gray-50 min-h-screen">
+        <div className="max-w-7xl mx-auto">
+          <div className="mb-8">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <h1 className="text-3xl font-bold text-gray-900 mb-2">Staff Roster Management</h1>
+                <p className="text-gray-600">Drag staff members to schedule shifts, then set duration</p>
+              </div>
+              <div className="text-right">
+                <div className="text-sm text-gray-500 mb-1">Current Date & Time</div>
+                <div className="text-lg font-semibold text-gray-900">
+                  {today.toLocaleDateString('en-US', { 
+                    weekday: 'long', 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                  })}
+                </div>
+                <div className="text-md text-gray-700">
+                  {currentTime.toLocaleTimeString()}
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Schedule Grid */}
-          <div className="lg:col-span-3">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-              <div className="p-6 border-b border-gray-200">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-semibold flex items-center">
-                    <Calendar className="mr-2 h-5 w-5" />
-                    Weekly Schedule
-                  </h2>
-                  
-                  {/* Color Legend */}
-                  <div className="flex items-center space-x-4 text-sm">
-                    <div className="flex items-center space-x-2">
-                      <div className="w-4 h-4 bg-gradient-to-r from-blue-500 to-indigo-600 rounded"></div>
-                      <span className="text-gray-600">Full Hour (60+ min)</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <div className="w-4 h-4 bg-gradient-to-r from-orange-400 to-red-500 rounded"></div>
-                      <span className="text-gray-600">Partial Hour (30 min)</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="overflow-x-auto">
-                <div className="grid grid-cols-8 min-w-[800px]">
-                  {/* Header */}
-                  <div className="p-4 bg-gray-50 font-semibold border-r border-gray-200">Time</div>
-                  {weekDays.map(day => (
-                    <div key={day} className="p-4 bg-gray-50 font-semibold text-center border-r border-gray-200">
-                      {day}
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <div className="lg:col-span-1">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h2 className="text-xl font-semibold mb-4 flex items-center">
+                  <Users className="mr-2 h-5 w-5" />
+                  Staff Members
+                </h2>
+                <div className="space-y-3">
+                  {staff.map(member => (
+                    <div
+                      key={member.id}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, member)}
+                      className="p-3 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200 cursor-move hover:shadow-md transition-all duration-200 select-none"
+                    >
+                      <div className="flex items-center">
+                        <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-semibold mr-3">
+                          {member.avatar}
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-900">{member.name}</p>
+                          <p className="text-sm text-gray-600">{member.role}</p>
+                        </div>
+                      </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            </div>
 
-                  {/* Time slots */}
-                  {timeSlots.slice(6, 22).map(timeSlot => {
-                    // Calculate the maximum height needed for this entire row
-                    const rowHeight = Math.max(80, ...weekDays.map(day => {
-                      const { fullHourShifts, partialShifts } = getShiftsForTimeSlot(day, timeSlot);
-                      if (fullHourShifts.length > 0 || partialShifts.length > 0) {
-                        return (fullHourShifts.length * 20) + (partialShifts.length > 0 ? 30 : 0) + 40;
-                      }
-                      return 80;
-                    }));
-
-                    return (
-                      <React.Fragment key={timeSlot}>
-                        <div 
-                          className="p-3 bg-gray-50 text-sm font-medium border-r border-b border-gray-200 flex items-center"
-                          style={{ height: `${rowHeight}px` }}
+            <div className="lg:col-span-3">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div className="p-6 border-b border-gray-200">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center space-x-4">
+                      <h2 className="text-xl font-semibold flex items-center">
+                        <Calendar className="mr-2 h-5 w-5" />
+                        Weekly Schedule
+                      </h2>
+                      
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => navigateWeek(-1)}
+                          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                          title="Previous week"
                         >
-                          {timeSlot}
-                        </div>
-                        {weekDays.map(day => {
-                          const { fullHourShifts, partialShifts, dateString } = getShiftsForTimeSlot(day, timeSlot);
-                          
-                          return (
-                            <div
-                              key={`${day}-${timeSlot}`}
-                              className="relative border-r border-b border-gray-200 hover:bg-blue-50 transition-colors"
-                              style={{ height: `${rowHeight}px` }}
-                              onDragOver={handleDragOver}
-                              onDrop={(e) => handleDrop(e, day, timeSlot)}
-                            >
-                            {/* Full Hour Shifts - Combined in one box */}
-                            {fullHourShifts.length > 0 && (
-                              <div className="absolute top-1 left-1 right-1 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-md p-2 text-white text-xs">
-                                <div className="space-y-1">
-                                  {fullHourShifts.map((shift, index) => {
-                                    const staffMember = staff.find(s => s.id === shift.staffId);
-                                    return (
-                                      <div key={shift.id} className="flex items-center justify-between">
-                                        <span className="font-semibold">{staffMember?.name}</span>
-                                        <button
-                                          onClick={() => removeStaffFromSlot(shift.staffId, dateString, timeSlot)}
-                                          className="w-3 h-3 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600 transition-colors flex-shrink-0"
-                                          title={`Remove ${staffMember?.name}`}
-                                        >
-                                          <X className="w-2 h-2" />
-                                        </button>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
-                            
-                            {/* Partial Shifts - Combined in one box */}
-                            {partialShifts.length > 0 && (
-                              <div 
-                                className="absolute left-1 right-1 bg-gradient-to-r from-orange-400 to-red-500 rounded-md p-2 text-white text-xs"
-                                style={{ 
-                                  top: fullHourShifts.length > 0 
-                                    ? `${(fullHourShifts.length * 20) + 20}px` 
-                                    : '4px' 
-                                }}
-                              >
-                                <div className="space-y-1">
-                                  {partialShifts.map((shift) => {
-                                    const staffMember = staff.find(s => s.id === shift.staffId);
-                                    
-                                    return (
-                                      <div 
-                                        key={`${shift.id}-partial`}
-                                        className="flex items-center justify-between"
-                                      >
-                                        <span className="font-semibold">{staffMember?.name}</span>
-                                        <button
-                                          onClick={() => removeStaffFromSlot(shift.staffId, dateString, timeSlot)}
-                                          className="w-3 h-3 bg-red-600 rounded-full flex items-center justify-center hover:bg-red-700 transition-colors flex-shrink-0"
-                                          title="Remove this partial shift"
-                                        >
-                                          <X className="w-1.5 h-1.5" />
-                                        </button>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
+                          <ChevronLeft className="w-5 h-5" />
+                        </button>
+                        
+                        <div className="px-4 py-2 bg-gray-50 rounded-lg min-w-[200px] text-center">
+                          <div className="text-sm font-medium text-gray-900">
+                            {weekDates[0].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - {weekDates[6].toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                           </div>
-                        );
-                      })}
-                    </React.Fragment>
-                  )})}
+                          {isCurrentWeek && (
+                            <div className="text-xs text-blue-600 font-medium">Current Week</div>
+                          )}
+                        </div>
+                        
+                        <button
+                          onClick={() => navigateWeek(1)}
+                          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                          title="Next week"
+                        >
+                          <ChevronRight className="w-5 h-5" />
+                        </button>
+                        
+                        {!isCurrentWeek && (
+                          <button
+                            onClick={goToCurrentWeek}
+                            className="px-3 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm font-medium"
+                          >
+                            Today
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center space-x-4 text-sm">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-4 h-4 bg-gradient-to-r from-blue-500 to-indigo-600 rounded"></div>
+                        <span className="text-gray-600">Full Hour (60+ min)</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <div className="w-4 h-4 bg-gradient-to-r from-orange-400 to-red-500 rounded"></div>
+                        <span className="text-gray-600">Partial Hour (30 min)</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex space-x-2 mt-2">
+                    <button
+                      onClick={() => setServiceView('lunch')}
+                      className={`px-3 py-1 rounded-lg text-sm font-medium ${
+                        serviceView === 'lunch'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      Lunch (9 AM - 2 PM)
+                    </button>
+                    <button
+                      onClick={() => setServiceView('dinner')}
+                      className={`px-3 py-1 rounded-lg text-sm font-medium ${
+                        serviceView === 'dinner'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      Dinner (4 PM - 11 PM)
+                    </button>
+                  </div>
+                </div>
+
+                
+                
+                <div className="overflow-x-auto">
+                  <div className="grid grid-cols-8 min-w-[800px]">
+                    <div className="p-4 bg-gray-50 font-semibold border-r border-gray-200">Time</div>
+                    {weekDays.map((day, index) => {
+                      const dayDate = weekDates[index];
+                      const isToday = dayDate.toDateString() === today.toDateString();
+                      
+                      return (
+                        <div key={day} className={`p-4 bg-gray-50 font-semibold text-center border-r border-gray-200 ${isToday ? 'bg-blue-50 text-blue-700' : ''}`}>
+                          <div>{day}</div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            {dayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </div>
+                          {isToday && (
+                            <div className="text-xs text-blue-600 font-medium">Today</div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {timeSlots.slice(start, end + 1).map(timeSlot => {
+                      const rowHeight = Math.max(80, ...weekDays.map((day, dayIndex) => {
+                        const { fullHourShifts, partialShifts } = getShiftsForTimeSlot(dayIndex, timeSlot);
+                        if (fullHourShifts.length > 0 || partialShifts.length > 0) {
+                          return (fullHourShifts.length * 20) + (partialShifts.length > 0 ? 30 : 0) + 40;
+                        }
+                        return 80;
+                      }));
+
+                      return (
+                        <React.Fragment key={timeSlot}>
+                          <div 
+                            className="p-3 bg-gray-50 text-sm font-medium border-r border-b border-gray-200 flex items-center"
+                            style={{ height: `${rowHeight}px` }}
+                          >
+                            {timeSlot}
+                          </div>
+                          {weekDays.map((day, dayIndex) => {
+                            const { fullHourShifts, partialShifts, dateString } = getShiftsForTimeSlot(dayIndex, timeSlot);
+                            const dayDate = weekDates[dayIndex];
+                            const isToday = dayDate.toDateString() === today.toDateString();
+                            
+                            return (
+                              <div
+                                key={`${day}-${timeSlot}`}
+                                className={`relative border-r border-b border-gray-200 hover:bg-blue-50 transition-colors ${isToday ? 'bg-blue-25' : ''}`}
+                                style={{ height: `${rowHeight}px` }}
+                                onDragOver={handleDragOver}
+                                onDrop={(e) => handleDrop(e, dayIndex, timeSlot)}
+                              >
+                              {fullHourShifts.length > 0 && (
+                                <div className="absolute top-1 left-1 right-1 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-md p-2 text-white text-xs">
+                                  <div className="space-y-1">
+                                    {fullHourShifts.map((shift, index) => {
+                                      const staffMember = staff.find(s => s.id === shift.staffId);
+                                      return (
+                                        <div key={shift.id} className="flex items-center justify-between">
+                                          <span className="font-semibold">{staffMember?.name}</span>
+                                          <button
+                                            onClick={() => removeStaffFromSlot(shift.staffId, dateString, timeSlot)}
+                                            className="w-3 h-3 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600 transition-colors flex-shrink-0"
+                                            title={`Remove ${staffMember?.name}`}
+                                          >
+                                            <X className="w-2 h-2" />
+                                          </button>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {partialShifts.length > 0 && (
+                                <div 
+                                  className="absolute left-1 right-1 bg-gradient-to-r from-orange-400 to-red-500 rounded-md p-2 text-white text-xs"
+                                  style={{ 
+                                    top: fullHourShifts.length > 0 
+                                      ? `${(fullHourShifts.length * 20) + 20}px` 
+                                      : '4px' 
+                                  }}
+                                >
+                                  <div className="space-y-1">
+                                    {partialShifts.map((shift) => {
+                                      const staffMember = staff.find(s => s.id === shift.staffId);
+                                      
+                                      return (
+                                        <div 
+                                          key={`${shift.id}-partial`}
+                                          className="flex items-center justify-between"
+                                        >
+                                          <span className="font-semibold">{staffMember?.name}</span>
+                                          <button
+                                            onClick={() => removeStaffFromSlot(shift.staffId, dateString, timeSlot)}
+                                            className="w-3 h-3 bg-red-600 rounded-full flex items-center justify-center hover:bg-red-700 transition-colors flex-shrink-0"
+                                            title="Remove this partial shift"
+                                          >
+                                            <X className="w-1.5 h-1.5" />
+                                          </button>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </React.Fragment>
+                    )})}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const StaffView = () => {
-    const today = new Date().toISOString().split('T')[0];
-    const todayShifts = shifts.filter(shift => 
-      shift.date === today || shift.date === '2025-09-02' // Mock today's date
-    );
+    const today = formatDate(new Date());
+    const todayShifts = shifts.filter(shift => shift.date === today);
 
     return (
       <div className="p-6 bg-gray-50 min-h-screen">
@@ -515,7 +655,6 @@ const RosteringApp = () => {
             <p className="text-gray-600">View your shifts and clock in/out</p>
           </div>
 
-          {/* Current Time Display */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
             <div className="text-center">
               <div className="text-4xl font-bold text-gray-900 mb-2">
@@ -532,7 +671,6 @@ const RosteringApp = () => {
             </div>
           </div>
 
-          {/* Today's Shifts */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
             <h2 className="text-xl font-semibold mb-4 flex items-center">
               <Calendar className="mr-2 h-5 w-5" />
@@ -543,7 +681,7 @@ const RosteringApp = () => {
               <div className="space-y-4">
                 {todayShifts.map(shift => {
                   const staffMember = staff.find(s => s.id === shift.staffId);
-                  const isCurrentUserShift = shift.staffId === 1; // Mock current user
+                  const isCurrentUserShift = shift.staffId === 1;
                   const clockStatus = clockedIn[shift.staffId];
                   
                   return (
@@ -599,7 +737,6 @@ const RosteringApp = () => {
             )}
           </div>
 
-          {/* Weekly Overview */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h2 className="text-xl font-semibold mb-4 flex items-center">
               <Clock className="mr-2 h-5 w-5" />
@@ -608,16 +745,18 @@ const RosteringApp = () => {
             
             <div className="grid grid-cols-7 gap-2">
               {weekDays.map((day, index) => {
-                const dayShifts = shifts.filter(shift => {
-                  const dayIndex = index + 2;
-                  return shift.date === `2025-09-${String(dayIndex).padStart(2, '0')}`;
-                });
+                const weekDates = getWeekDates(currentWeekStart);
+                const dayDate = weekDates[index];
+                const dateString = formatDate(dayDate);
+                const dayShifts = shifts.filter(shift => shift.date === dateString);
+                const isToday = dayDate.toDateString() === new Date().toDateString();
                 
                 return (
-                  <div key={day} className="border border-gray-200 rounded-lg p-3">
-                    <h3 className="font-medium text-center mb-2 text-gray-900">{day}</h3>
-                    <div className="text-center text-sm text-gray-600 mb-2">
-                      Sep {index + 2}
+                  <div key={day} className={`border border-gray-200 rounded-lg p-3 ${isToday ? 'border-blue-300 bg-blue-50' : ''}`}>
+                    <h3 className={`font-medium text-center mb-2 ${isToday ? 'text-blue-900' : 'text-gray-900'}`}>{day}</h3>
+                    <div className={`text-center text-sm mb-2 ${isToday ? 'text-blue-700' : 'text-gray-600'}`}>
+                      {dayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      {isToday && <div className="text-xs font-medium text-blue-600">Today</div>}
                     </div>
                     <div className="space-y-2">
                       {dayShifts.map(shift => {
@@ -738,7 +877,6 @@ const RosteringApp = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Navigation */}
       <nav className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex justify-between items-center h-16">
@@ -787,13 +925,10 @@ const RosteringApp = () => {
         </div>
       </nav>
 
-      {/* Main Content */}
       {currentView === 'admin' ? <AdminView /> : <StaffView />}
 
-      {/* Duration Popup */}
       <DurationPopup />
 
-      {/* Add Staff Modal */}
       <AddStaffModal 
         isOpen={showAddStaff} 
         onClose={() => setShowAddStaff(false)} 
