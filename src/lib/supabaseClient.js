@@ -6,6 +6,72 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 
 export const supabase = createClient(supabaseUrl, supabaseKey)
 
+// Authentication service
+export const authService = {
+  // Get current user
+  getCurrentUser() {
+    return supabase.auth.getUser()
+  },
+
+  // Get current session
+  getCurrentSession() {
+    return supabase.auth.getSession()
+  },
+
+  // Sign up new user
+  async signUp(email, password, userData = {}) {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: userData
+      }
+    })
+    
+    if (error) throw error
+    return data
+  },
+
+  // Sign in user
+  async signIn(email, password) {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    })
+    
+    if (error) throw error
+    return data
+  },
+
+  // Sign out user
+  async signOut() {
+    const { error } = await supabase.auth.signOut()
+    if (error) throw error
+  },
+
+  // Listen for auth state changes
+  onAuthStateChange(callback) {
+    return supabase.auth.onAuthStateChange(callback)
+  },
+
+  // Reset password
+  async resetPassword(email) {
+    const { data, error } = await supabase.auth.resetPasswordForEmail(email)
+    if (error) throw error
+    return data
+  },
+
+  // Update user password
+  async updatePassword(newPassword) {
+    const { data, error } = await supabase.auth.updateUser({
+      password: newPassword
+    })
+    
+    if (error) throw error
+    return data
+  }
+}
+
 // Database service functions
 export const staffService = {
   // Get all staff members
@@ -19,8 +85,20 @@ export const staffService = {
     return data
   },
 
-  // Add new staff member
-  async addStaff(staffData) {
+  // Get staff member by user ID
+  async getStaffByUserId(userId) {
+    const { data, error } = await supabase
+      .from('staff')
+      .select('*')
+      .eq('user_id', userId)
+      .single()
+    
+    if (error) throw error
+    return data
+  },
+
+  // Create new staff member (with auth link)
+  async createStaff(staffData) {
     const avatar = staffData.name
       .split(' ')
       .map(n => n[0])
@@ -31,9 +109,15 @@ export const staffService = {
       .from('staff')
       .insert([{ ...staffData, avatar }])
       .select()
+      .single()
     
     if (error) throw error
-    return data[0]
+    return data
+  },
+
+  // Add new staff member (legacy method - kept for compatibility)
+  async addStaff(staffData) {
+    return this.createStaff(staffData)
   },
 
   // Update staff member
@@ -56,6 +140,21 @@ export const staffService = {
       .eq('id', id)
     
     if (error) throw error
+  },
+
+  // Get staff member's profile with user info
+  async getStaffProfile(staffId) {
+    const { data, error } = await supabase
+      .from('staff')
+      .select(`
+        *,
+        user_id
+      `)
+      .eq('id', staffId)
+      .single()
+    
+    if (error) throw error
+    return data
   }
 }
 
@@ -71,9 +170,35 @@ export const shiftsService = {
           name,
           email,
           role,
-          avatar
+          avatar,
+          user_id
         )
       `)
+      .gte('date', startDate)
+      .lte('date', endDate)
+      .order('date')
+      .order('start_time')
+    
+    if (error) throw error
+    return data
+  },
+
+  // Get shifts for specific staff member
+  async getShiftsForStaff(staffId, startDate, endDate) {
+    const { data, error } = await supabase
+      .from('shifts')
+      .select(`
+        *,
+        staff:staff_id (
+          id,
+          name,
+          email,
+          role,
+          avatar,
+          user_id
+        )
+      `)
+      .eq('staff_id', staffId)
       .gte('date', startDate)
       .lte('date', endDate)
       .order('date')
@@ -94,7 +219,8 @@ export const shiftsService = {
           name,
           email,
           role,
-          avatar
+          avatar,
+          user_id
         )
       `)
       .eq('date', date)
@@ -116,13 +242,14 @@ export const shiftsService = {
           name,
           email,
           role,
-          avatar
+          avatar,
+          user_id
         )
       `)
-      .single();
+      .single()
     
     if (error) throw error
-    return data[0]
+    return data
   },
 
   // Update shift
@@ -138,7 +265,8 @@ export const shiftsService = {
           name,
           email,
           role,
-          avatar
+          avatar,
+          user_id
         )
       `)
     
@@ -171,7 +299,7 @@ export const shiftsService = {
 }
 
 export const clockService = {
-  // Get today's clock entries for staff
+  // Get today's clock entries for all staff
   async getTodaysClockEntries(date) {
     const { data, error } = await supabase
       .from('clock_entries')
@@ -180,10 +308,44 @@ export const clockService = {
         staff:staff_id (
           id,
           name,
-          avatar
+          avatar,
+          user_id
+        ),
+        shift:shift_id (
+          id,
+          start_time,
+          end_time
         )
       `)
       .eq('date', date)
+    
+    if (error) throw error
+    return data
+  },
+
+  // Get clock entries for specific staff member
+  async getClockEntriesForStaff(staffId, startDate, endDate) {
+    const { data, error } = await supabase
+      .from('clock_entries')
+      .select(`
+        *,
+        staff:staff_id (
+          id,
+          name,
+          avatar,
+          user_id
+        ),
+        shift:shift_id (
+          id,
+          start_time,
+          end_time
+        )
+      `)
+      .eq('staff_id', staffId)
+      .gte('date', startDate)
+      .lte('date', endDate)
+      .order('date', { ascending: false })
+      .order('clock_in_time', { ascending: false })
     
     if (error) throw error
     return data
@@ -204,10 +366,18 @@ export const clockService = {
           clock_in_time: now.toISOString(),
           date: today
         }])
-        .select()
+        .select(`
+          *,
+          staff:staff_id (
+            id,
+            name,
+            avatar
+          )
+        `)
+        .single()
       
       if (error) throw error
-      return data[0]
+      return data
     } else {
       // Update existing clock entry with clock out
       const { data, error } = await supabase
@@ -216,10 +386,18 @@ export const clockService = {
         .eq('staff_id', staffId)
         .eq('date', today)
         .is('clock_out_time', null)
-        .select()
+        .select(`
+          *,
+          staff:staff_id (
+            id,
+            name,
+            avatar
+          )
+        `)
+        .single()
       
       if (error) throw error
-      return data[0]
+      return data
     }
   },
 
@@ -231,11 +409,60 @@ export const clockService = {
       .eq('staff_id', staffId)
       .eq('date', date)
       .is('clock_out_time', null)
-      .order('created_at', { ascending: false })
+      .order('clock_in_time', { ascending: false })
       .limit(1)
     
     if (error) throw error
     return data[0] || null
+  },
+
+  // Create clock entry (manual entry by admin)
+  async createClockEntry(clockData) {
+    const { data, error } = await supabase
+      .from('clock_entries')
+      .insert([clockData])
+      .select(`
+        *,
+        staff:staff_id (
+          id,
+          name,
+          avatar
+        )
+      `)
+      .single()
+    
+    if (error) throw error
+    return data
+  },
+
+  // Update clock entry
+  async updateClockEntry(id, updateData) {
+    const { data, error } = await supabase
+      .from('clock_entries')
+      .update(updateData)
+      .eq('id', id)
+      .select(`
+        *,
+        staff:staff_id (
+          id,
+          name,
+          avatar
+        )
+      `)
+      .single()
+    
+    if (error) throw error
+    return data
+  },
+
+  // Delete clock entry
+  async deleteClockEntry(id) {
+    const { error } = await supabase
+      .from('clock_entries')
+      .delete()
+      .eq('id', id)
+    
+    if (error) throw error
   }
 }
 
@@ -272,12 +499,27 @@ export const dataTransformers = {
       name: dbStaff.name,
       email: dbStaff.email,
       role: dbStaff.role,
-      avatar: dbStaff.avatar
+      avatar: dbStaff.avatar,
+      userId: dbStaff.user_id
+    }
+  },
+
+  // Convert database clock entry to app format
+  clockEntryToAppFormat(dbClockEntry) {
+    return {
+      id: dbClockEntry.id,
+      staffId: dbClockEntry.staff_id,
+      shiftId: dbClockEntry.shift_id,
+      clockInTime: dbClockEntry.clock_in_time,
+      clockOutTime: dbClockEntry.clock_out_time,
+      date: dbClockEntry.date,
+      staff: dbClockEntry.staff,
+      shift: dbClockEntry.shift
     }
   }
 }
 
-// Real-time subscriptions (optional)
+// Real-time subscriptions
 export const subscriptions = {
   // Subscribe to staff changes
   subscribeToStaff(callback) {
@@ -313,5 +555,66 @@ export const subscriptions = {
         table: 'clock_entries'
       }, callback)
       .subscribe()
+  },
+
+  // Subscribe to auth changes
+  subscribeToAuth(callback) {
+    return supabase.auth.onAuthStateChange(callback)
+  }
+}
+
+// Helper functions for role-based access
+export const rbacHelpers = {
+  // Check if user is admin or manager
+  isAdmin(userRole) {
+    return ['admin', 'manager'].includes(userRole?.toLowerCase())
+  },
+
+  // Check if user can manage staff
+  canManageStaff(userRole) {
+    return ['admin', 'manager'].includes(userRole?.toLowerCase())
+  },
+
+  // Check if user can manage schedules
+  canManageSchedules(userRole) {
+    return ['admin', 'manager'].includes(userRole?.toLowerCase())
+  },
+
+  // Check if user can view all data
+  canViewAllData(userRole) {
+    return ['admin', 'manager'].includes(userRole?.toLowerCase())
+  },
+
+  // Get allowed actions for user role
+  getAllowedActions(userRole) {
+    const role = userRole?.toLowerCase()
+    
+    switch (role) {
+      case 'admin':
+        return {
+          canManageStaff: true,
+          canManageSchedules: true,
+          canViewAllData: true,
+          canManageSettings: true,
+          canViewReports: true
+        }
+      case 'manager':
+        return {
+          canManageStaff: true,
+          canManageSchedules: true,
+          canViewAllData: true,
+          canManageSettings: false,
+          canViewReports: true
+        }
+      case 'staff':
+      default:
+        return {
+          canManageStaff: false,
+          canManageSchedules: false,
+          canViewAllData: false,
+          canManageSettings: false,
+          canViewReports: false
+        }
+    }
   }
 }

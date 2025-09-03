@@ -1,13 +1,156 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Users, Plus, X, Play, Square, User, Settings, Home, ChevronLeft, ChevronRight } from 'lucide-react';
-import { staffService, shiftsService,subscriptions } from './lib/supabaseClient';
-import { supabase } from './lib/supabaseClient'; // make sure you have this
-
+import { Calendar, Clock, Users, Plus, X, Play, Square, User, Settings, Home, ChevronLeft, ChevronRight, LogOut, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { staffService, shiftsService, subscriptions } from './lib/supabaseClient';
+import { supabase } from './lib/supabaseClient';
 
 const timeSlots = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`);
 const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
+// AuthComponent moved outside - THIS IS THE FIX
+const AuthComponent = ({ 
+  authMode, 
+  setAuthMode, 
+  authData, 
+  setAuthData, 
+  showPassword, 
+  setShowPassword, 
+  authError, 
+  authLoading, 
+  handleAuth 
+}) => (
+  <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+    <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-8">
+      <div className="text-center mb-8">
+        <div className="flex items-center justify-center mb-4">
+          <Calendar className="w-10 h-10 text-blue-600 mr-3" />
+          <span className="text-2xl font-bold text-gray-900">RosterPro</span>
+        </div>
+        <h2 className="text-xl font-semibold text-gray-900">
+          {authMode === 'login' ? 'Welcome back' : 'Create account'}
+        </h2>
+        <p className="text-gray-600 mt-2">
+          {authMode === 'login' ? 'Sign in to access your schedule' : 'Join the team'}
+        </p>
+      </div>
+
+      <form onSubmit={handleAuth} className="space-y-4">
+        {authMode === 'signup' && (
+          <>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
+              <input
+                type="text"
+                required
+                value={authData.name}
+                onChange={(e) => setAuthData({...authData, name: e.target.value})}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Enter your full name"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Role</label>
+              <select
+                value={authData.role}
+                onChange={(e) => setAuthData({...authData, role: e.target.value})}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="staff">Staff</option>
+                <option value="manager">Manager</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+          </>
+        )}
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+          <div className="relative">
+            <Mail className="w-5 h-5 text-gray-400 absolute left-3 top-3.5" />
+            <input
+              type="email"
+              required
+              value={authData.email}
+              onChange={(e) => setAuthData({...authData, email: e.target.value})}
+              className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Enter your email"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+          <div className="relative">
+            <Lock className="w-5 h-5 text-gray-400 absolute left-3 top-3.5" />
+            <input
+              type={showPassword ? "text" : "password"}
+              required
+              value={authData.password}
+              onChange={(e) => setAuthData({...authData, password: e.target.value})}
+              className="w-full pl-11 pr-11 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Enter your password"
+              minLength="6"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3 top-3.5 text-gray-400 hover:text-gray-600"
+            >
+              {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+            </button>
+          </div>
+        </div>
+
+        {authError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+            <p className="text-red-600 text-sm">{authError}</p>
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={authLoading}
+          className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {authLoading ? 'Processing...' : (authMode === 'login' ? 'Sign In' : 'Create Account')}
+        </button>
+      </form>
+
+      <div className="mt-6 text-center">
+        <p className="text-gray-600">
+          {authMode === 'login' ? "Don't have an account?" : "Already have an account?"}
+          <button
+            onClick={() => {
+              setAuthMode(authMode === 'login' ? 'signup' : 'login');
+              setAuthError('');
+              setAuthData({ email: '', password: '', name: '', role: 'staff' });
+            }}
+            className="ml-2 text-blue-600 hover:text-blue-700 font-medium"
+          >
+            {authMode === 'login' ? 'Sign up' : 'Sign in'}
+          </button>
+        </p>
+      </div>
+    </div>
+  </div>
+);
+
 const RosteringApp = () => {
+  // Authentication states
+  const [user, setUser] = useState(null);
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showAuth, setShowAuth] = useState(true);
+  const [authMode, setAuthMode] = useState('login');
+  const [authData, setAuthData] = useState({
+    email: '',
+    password: '',
+    name: '',
+    role: 'staff'
+  });
+  const [showPassword, setShowPassword] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
 
   const dataTransformers = {
     staffToAppFormat: (row) => ({
@@ -15,7 +158,8 @@ const RosteringApp = () => {
       name: row.name,
       role: row.role,
       email: row.email,
-      avatar: row.avatar
+      avatar: row.avatar,
+      userId: row.user_id
     }),
     shiftToAppFormat: (row) => ({
       id: row.id,
@@ -31,7 +175,7 @@ const RosteringApp = () => {
   const getWeekStart = (date) => {
     const d = new Date(date);
     const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is Sunday
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
     return new Date(d.setDate(diff));
   };
 
@@ -58,19 +202,66 @@ const RosteringApp = () => {
   const [pendingShift, setPendingShift] = useState(null);
   const [shiftDuration, setShiftDuration] = useState(5);
   const [currentWeekStart, setCurrentWeekStart] = useState(getWeekStart(new Date()));
-  const [serviceView, setServiceView] = useState('lunch'); // 'lunch' | 'dinner'
+  const [serviceView, setServiceView] = useState('lunch');
+  const [currentStaffMember, setCurrentStaffMember] = useState(null);
+
   const slotRanges = {
-    lunch: [9, 14],   // 09:00 → 14:00
-    dinner: [16, 23], // 16:00 → 23:00
+    lunch: [9, 14],
+    dinner: [16, 23],
   };
 
   const [start, end] = slotRanges[serviceView];
 
-
+  // Authentication effects
   useEffect(() => {
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      setLoading(false);
+      setShowAuth(!session);
+    });
+
+    // Listen for auth changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      setShowAuth(!session);
+      
+      if (session?.user) {
+        // Fetch the current user's staff record
+        try {
+          const staffData = await staffService.getAllStaff();
+          const userStaff = staffData.find(s => s.user_id === session.user.id);
+          setCurrentStaffMember(userStaff);
+          
+          // Set appropriate view based on role
+          if (userStaff?.role === 'admin' || userStaff?.role === 'manager') {
+            setCurrentView('admin');
+          } else {
+            setCurrentView('staff');
+          }
+        } catch (error) {
+          console.error('Error fetching user staff record:', error);
+        }
+      } else {
+        setCurrentStaffMember(null);
+      }
+      
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Data loading effect
+  useEffect(() => {
+    if (!user) return;
+
     async function fetchData() {
       try {
-        // fetch staff + shifts for this week
         const staffData = await staffService.getAllStaff();
         setStaff(staffData.map(dataTransformers.staffToAppFormat));
 
@@ -87,26 +278,89 @@ const RosteringApp = () => {
 
     fetchData();
 
-    // 👇 use your subscription helper
     const subscription = subscriptions.subscribeToShifts((payload) => {
       console.log("Realtime shift update:", payload);
-      fetchData(); // reload when any shift is added/updated/deleted
+      fetchData();
     });
 
-    // cleanup
     return () => {
       supabase.removeChannel(subscription);
     };
-  }, [currentWeekStart]);
-
-
-  
+  }, [currentWeekStart, user]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
+  // Authentication functions
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthLoading(true);
+
+    try {
+      if (authMode === 'login') {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: authData.email,
+          password: authData.password,
+        });
+        
+        if (error) throw error;
+      } else {
+        // Sign up new user
+        const { data: authResult, error: signUpError } = await supabase.auth.signUp({
+          email: authData.email,
+          password: authData.password,
+          options: {
+            data: {
+              name: authData.name,
+              role: authData.role
+            }
+          }
+        });
+
+        if (signUpError) throw signUpError;
+
+        // Create staff record
+        if (authResult.user) {
+          await staffService.createStaff({
+            user_id: authResult.user.id,
+            name: authData.name,
+            email: authData.email,
+            role: authData.role,
+            avatar: authData.name.split(' ').map(n => n[0]).join('').toUpperCase()
+          });
+        }
+      }
+      
+      setAuthData({ email: '', password: '', name: '', role: 'staff' });
+    } catch (error) {
+      setAuthError(error.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (error) {
+      console.error('Error signing out:', error);
+    }
+  };
+
+  // Check if current user is admin
+  const isAdmin = () => {
+    return currentStaffMember?.role === 'admin' || currentStaffMember?.role === 'manager';
+  };
+
+  // Get current user's shifts only
+  const getCurrentUserShifts = () => {
+    return shifts.filter(shift => shift.staffId === currentStaffMember?.id);
+  };
+
+  // Rest of your existing component logic...
   const handleDragStart = (e, staffMember) => {
     setDraggedStaff(staffMember);
     e.dataTransfer.effectAllowed = 'move';
@@ -121,7 +375,6 @@ const RosteringApp = () => {
     e.preventDefault();
     if (!draggedStaff) return;
 
-    // Get the actual date for this day
     const weekDates = getWeekDates(currentWeekStart);
     const selectedDate = weekDates[dayIndex];
     const dateString = formatDate(selectedDate);
@@ -522,8 +775,6 @@ const RosteringApp = () => {
                   </div>
                 </div>
 
-                
-                
                 <div className="overflow-x-auto">
                   <div className="grid grid-cols-8 min-w-[800px]">
                     <div className="p-4 bg-gray-50 font-semibold border-r border-gray-200">Time</div>
@@ -645,14 +896,15 @@ const RosteringApp = () => {
 
   const StaffView = () => {
     const today = formatDate(new Date());
-    const todayShifts = shifts.filter(shift => shift.date === today);
+    const userShifts = getCurrentUserShifts();
+    const todayShifts = userShifts.filter(shift => shift.date === today);
 
     return (
       <div className="p-6 bg-gray-50 min-h-screen">
         <div className="max-w-4xl mx-auto">
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-gray-900 mb-2">My Schedule</h1>
-            <p className="text-gray-600">View your shifts and clock in/out</p>
+            <p className="text-gray-600">Welcome, {currentStaffMember?.name}! View your shifts and clock in/out</p>
           </div>
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
@@ -680,50 +932,46 @@ const RosteringApp = () => {
             {todayShifts.length > 0 ? (
               <div className="space-y-4">
                 {todayShifts.map(shift => {
-                  const staffMember = staff.find(s => s.id === shift.staffId);
-                  const isCurrentUserShift = shift.staffId === 1;
                   const clockStatus = clockedIn[shift.staffId];
                   
                   return (
-                    <div key={shift.id} className={`p-4 rounded-lg border-2 ${isCurrentUserShift ? 'border-blue-200 bg-blue-50' : 'border-gray-200 bg-gray-50'}`}>
+                    <div key={shift.id} className="p-4 rounded-lg border-2 border-blue-200 bg-blue-50">
                       <div className="flex items-center justify-between">
                         <div>
-                          <h3 className="font-semibold text-gray-900">{staffMember?.name}</h3>
+                          <h3 className="font-semibold text-gray-900">{currentStaffMember?.name}</h3>
                           <p className="text-gray-600">{shift.role}</p>
                           <p className="text-sm text-gray-500">{shift.startTime} - {shift.endTime}</p>
                         </div>
                         
-                        {isCurrentUserShift && (
-                          <div className="flex items-center space-x-3">
-                            <div className="text-right">
-                              {clockStatus && (
-                                <p className="text-sm text-gray-600">
-                                  {clockStatus.clockedIn ? 'Clocked in' : 'Clocked out'} at {clockStatus.time}
-                                </p>
-                              )}
-                            </div>
-                            <button
-                              onClick={() => handleClockInOut(shift.staffId, clockStatus?.clockedIn ? 'out' : 'in')}
-                              className={`px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors ${
-                                clockStatus?.clockedIn 
-                                  ? 'bg-red-600 hover:bg-red-700 text-white' 
-                                  : 'bg-green-600 hover:bg-green-700 text-white'
-                              }`}
-                            >
-                              {clockStatus?.clockedIn ? (
-                                <>
-                                  <Square className="w-4 h-4" />
-                                  <span>Clock Out</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Play className="w-4 h-4" />
-                                  <span>Clock In</span>
-                                </>
-                              )}
-                            </button>
+                        <div className="flex items-center space-x-3">
+                          <div className="text-right">
+                            {clockStatus && (
+                              <p className="text-sm text-gray-600">
+                                {clockStatus.clockedIn ? 'Clocked in' : 'Clocked out'} at {clockStatus.time}
+                              </p>
+                            )}
                           </div>
-                        )}
+                          <button
+                            onClick={() => handleClockInOut(shift.staffId, clockStatus?.clockedIn ? 'out' : 'in')}
+                            className={`px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors ${
+                              clockStatus?.clockedIn 
+                                ? 'bg-red-600 hover:bg-red-700 text-white' 
+                                : 'bg-green-600 hover:bg-green-700 text-white'
+                            }`}
+                          >
+                            {clockStatus?.clockedIn ? (
+                              <>
+                                <Square className="w-4 h-4" />
+                                <span>Clock Out</span>
+                              </>
+                            ) : (
+                              <>
+                                <Play className="w-4 h-4" />
+                                <span>Clock In</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -748,7 +996,7 @@ const RosteringApp = () => {
                 const weekDates = getWeekDates(currentWeekStart);
                 const dayDate = weekDates[index];
                 const dateString = formatDate(dayDate);
-                const dayShifts = shifts.filter(shift => shift.date === dateString);
+                const dayShifts = userShifts.filter(shift => shift.date === dateString);
                 const isToday = dayDate.toDateString() === new Date().toDateString();
                 
                 return (
@@ -759,17 +1007,12 @@ const RosteringApp = () => {
                       {isToday && <div className="text-xs font-medium text-blue-600">Today</div>}
                     </div>
                     <div className="space-y-2">
-                      {dayShifts.map(shift => {
-                        const staffMember = staff.find(s => s.id === shift.staffId);
-                        const isCurrentUser = shift.staffId === 1;
-                        
-                        return (
-                          <div key={shift.id} className={`p-2 rounded text-xs ${isCurrentUser ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-700'}`}>
-                            <div className="font-medium">{staffMember?.name}</div>
-                            <div>{shift.startTime}-{shift.endTime}</div>
-                          </div>
-                        );
-                      })}
+                      {dayShifts.map(shift => (
+                        <div key={shift.id} className="p-2 rounded text-xs bg-blue-100 text-blue-800">
+                          <div className="font-medium">{currentStaffMember?.name}</div>
+                          <div>{shift.startTime}-{shift.endTime}</div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 );
@@ -781,19 +1024,60 @@ const RosteringApp = () => {
     );
   };
 
-  const AddStaffModal = ({ isOpen, onClose, onAdd }) => {
-    const [newStaff, setNewStaff] = useState({ name: '', role: '', email: '' });
+  const [showAddStaff, setShowAddStaff] = useState(false);
 
-    const handleSubmit = () => {
-      if (newStaff.name && newStaff.role && newStaff.email) {
-        const staff = {
-          id: Date.now(),
-          ...newStaff,
-          avatar: newStaff.name.split(' ').map(n => n[0]).join('').toUpperCase()
-        };
-        onAdd(staff);
-        setNewStaff({ name: '', role: '', email: '' });
-        onClose();
+  const AddStaffModal = ({ isOpen, onClose, onAdd }) => {
+    const [newStaff, setNewStaff] = useState({ name: '', role: '', email: '', password: '' });
+    const [addStaffLoading, setAddStaffLoading] = useState(false);
+    const [addStaffError, setAddStaffError] = useState('');
+
+    const handleSubmit = async () => {
+      if (newStaff.name && newStaff.role && newStaff.email && newStaff.password) {
+        setAddStaffLoading(true);
+        setAddStaffError('');
+        
+        try {
+          // Create auth user
+          const { data: authResult, error: signUpError } = await supabase.auth.signUp({
+            email: newStaff.email,
+            password: newStaff.password,
+            options: {
+              data: {
+                name: newStaff.name,
+                role: newStaff.role
+              }
+            }
+          });
+
+          if (signUpError) throw signUpError;
+
+          // Create staff record
+          if (authResult.user) {
+            const staffRecord = {
+              user_id: authResult.user.id,
+              name: newStaff.name,
+              email: newStaff.email,
+              role: newStaff.role,
+              avatar: newStaff.name.split(' ').map(n => n[0]).join('').toUpperCase()
+            };
+
+            await staffService.createStaff(staffRecord);
+            
+            // Add to local state
+            onAdd({
+              id: Date.now(),
+              ...staffRecord,
+              userId: authResult.user.id
+            });
+          }
+          
+          setNewStaff({ name: '', role: '', email: '', password: '' });
+          onClose();
+        } catch (error) {
+          setAddStaffError(error.message);
+        } finally {
+          setAddStaffLoading(false);
+        }
       }
     };
 
@@ -829,10 +1113,9 @@ const RosteringApp = () => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 <option value="">Select role</option>
-                <option value="Manager">Manager</option>
-                <option value="Cashier">Cashier</option>
-                <option value="Sales Assistant">Sales Assistant</option>
-                <option value="Stock Manager">Stock Manager</option>
+                <option value="staff">Staff</option>
+                <option value="manager">Manager</option>
+                <option value="admin">Admin</option>
               </select>
             </div>
             
@@ -846,21 +1129,42 @@ const RosteringApp = () => {
                 placeholder="Enter email address"
               />
             </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Temporary Password</label>
+              <input
+                type="password"
+                value={newStaff.password}
+                onChange={(e) => setNewStaff({...newStaff, password: e.target.value})}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Set initial password"
+                minLength="6"
+              />
+              <p className="text-xs text-gray-500 mt-1">Staff member can change this after first login</p>
+            </div>
+
+            {addStaffError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                <p className="text-red-600 text-sm">{addStaffError}</p>
+              </div>
+            )}
             
             <div className="flex space-x-3 pt-4">
               <button
                 type="button"
                 onClick={onClose}
                 className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium"
+                disabled={addStaffLoading}
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleSubmit}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
+                disabled={addStaffLoading}
               >
-                Add Staff
+                {addStaffLoading ? 'Creating...' : 'Add Staff'}
               </button>
             </div>
           </div>
@@ -869,11 +1173,41 @@ const RosteringApp = () => {
     );
   };
 
-  const [showAddStaff, setShowAddStaff] = useState(false);
-
   const addNewStaff = (newStaffMember) => {
     setStaff([...staff, newStaffMember]);
   };
+
+  // Show loading screen
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="flex items-center justify-center mb-4">
+            <Calendar className="w-10 h-10 text-blue-600 mr-3 animate-pulse" />
+            <span className="text-2xl font-bold text-gray-900">RosterPro</span>
+          </div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show auth screen if not authenticated
+  if (showAuth || !user) {
+    return (
+      <AuthComponent
+        authMode={authMode}
+        setAuthMode={setAuthMode}
+        authData={authData}
+        setAuthData={setAuthData}
+        showPassword={showPassword}
+        setShowPassword={setShowPassword}
+        authError={authError}
+        authLoading={authLoading}
+        handleAuth={handleAuth}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -887,17 +1221,19 @@ const RosteringApp = () => {
               </div>
               
               <div className="flex space-x-4">
-                <button
-                  onClick={() => setCurrentView('admin')}
-                  className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2 ${
-                    currentView === 'admin' 
-                      ? 'bg-blue-100 text-blue-700' 
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                  }`}
-                >
-                  <Settings className="w-4 h-4" />
-                  <span>Admin</span>
-                </button>
+                {isAdmin() && (
+                  <button
+                    onClick={() => setCurrentView('admin')}
+                    className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2 ${
+                      currentView === 'admin' 
+                        ? 'bg-blue-100 text-blue-700' 
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    <Settings className="w-4 h-4" />
+                    <span>Admin</span>
+                  </button>
+                )}
                 <button
                   onClick={() => setCurrentView('staff')}
                   className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2 ${
@@ -907,33 +1243,55 @@ const RosteringApp = () => {
                   }`}
                 >
                   <User className="w-4 h-4" />
-                  <span>Staff View</span>
+                  <span>My Schedule</span>
                 </button>
               </div>
             </div>
 
-            {currentView === 'admin' && (
+            <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-semibold">
+                  {currentStaffMember?.avatar}
+                </div>
+                <span className="text-sm text-gray-700">{currentStaffMember?.name}</span>
+                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                  {currentStaffMember?.role}
+                </span>
+              </div>
+
+              {isAdmin() && currentView === 'admin' && (
+                <button
+                  onClick={() => setShowAddStaff(true)}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium flex items-center space-x-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add Staff</span>
+                </button>
+              )}
+
               <button
-                onClick={() => setShowAddStaff(true)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium flex items-center space-x-2"
+                onClick={handleSignOut}
+                className="px-4 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg font-medium flex items-center space-x-2"
               >
-                <Plus className="w-4 h-4" />
-                <span>Add Staff</span>
+                <LogOut className="w-4 h-4" />
+                <span>Sign Out</span>
               </button>
-            )}
+            </div>
           </div>
         </div>
       </nav>
 
-      {currentView === 'admin' ? <AdminView /> : <StaffView />}
+      {currentView === 'admin' && isAdmin() ? <AdminView /> : <StaffView />}
 
       <DurationPopup />
 
-      <AddStaffModal 
-        isOpen={showAddStaff} 
-        onClose={() => setShowAddStaff(false)} 
-        onAdd={addNewStaff}
-      />
+      {isAdmin() && (
+        <AddStaffModal 
+          isOpen={showAddStaff} 
+          onClose={() => setShowAddStaff(false)} 
+          onAdd={addNewStaff}
+        />
+      )}
     </div>
   );
 };
