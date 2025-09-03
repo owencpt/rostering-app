@@ -4,8 +4,17 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = 'https://ksgenquvxmaftrlztlfg.supabase.co'
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtzZ2VucXV2eG1hZnRybHp0bGZnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1Njc5Nzg3NywiZXhwIjoyMDcyMzczODc3fQ.a8Gx9lCqK1wDiU-vIRIBvQBtSJwIpW1gCTFfKII6n_U'
 
-export const supabase = createClient(supabaseUrl, supabaseKey)
-
+export const supabase = createClient(
+  supabaseUrl,
+  supabaseKey,
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true
+    }
+  }
+);
 // Authentication service
 export const authService = {
   // Get current user

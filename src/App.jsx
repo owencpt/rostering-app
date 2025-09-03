@@ -191,7 +191,7 @@ const RosteringApp = () => {
     });
   };
 
-  const [currentView, setCurrentView] = useState('admin');
+  const [currentView, setCurrentView] = useState(null);
   const [selectedStaff, setSelectedStaff] = useState(null);
   const [staff, setStaff] = useState([]);
   const [shifts, setShifts] = useState([]);
@@ -214,47 +214,62 @@ const RosteringApp = () => {
 
   // Authentication effects
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
-      setShowAuth(!session);
-    });
+  let isMounted = true;
 
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setShowAuth(!session);
-      
-      if (session?.user) {
-        // Fetch the current user's staff record
-        try {
-          const staffData = await staffService.getAllStaff();
-          const userStaff = staffData.find(s => s.user_id === session.user.id);
-          setCurrentStaffMember(userStaff);
-          
-          // Set appropriate view based on role
-          if (userStaff?.role === 'admin' || userStaff?.role === 'manager') {
-            setCurrentView('admin');
-          } else {
-            setCurrentView('staff');
-          }
-        } catch (error) {
-          console.error('Error fetching user staff record:', error);
-        }
-      } else {
-        setCurrentStaffMember(null);
-      }
-      
-      setLoading(false);
-    });
+  console.log("Auth effect starting...");
 
-    return () => subscription.unsubscribe();
-  }, []);
+  // Initial session check
+  (async () => {
+    const { data, error } = await supabase.auth.getSession();
+    console.log("Initial getSession:", { data, error });
+    if (isMounted && data.session) {
+      handleSessionChange(data.session, "initial");
+    }
+  })();
+
+  // Subscribe to auth changes
+  const { data: { subscription } } = supabase.auth.onAuthStateChange(
+    (_event, session) => {
+      console.log("Auth state change:", _event, session?.user?.email);
+      if (isMounted) handleSessionChange(session, "auth change");
+    }
+  );
+
+  return () => {
+    isMounted = false;
+    subscription.unsubscribe();
+  };
+}, []);
+
+function handleSessionChange(session, source) {
+  setSession(session);
+  setUser(session?.user ?? null);
+  setShowAuth(!session);
+
+  if (session?.user) {
+    console.log(`Processing user from ${source}...`);
+    staffService.getAllStaff()
+      .then(staffData => {
+        const userStaff = staffData.find(s => s.user_id === session.user.id);
+        setCurrentStaffMember(userStaff);
+        setCurrentView(
+          userStaff?.role === "admin" || userStaff?.role === "manager"
+            ? "admin"
+            : "staff"
+        );
+      })
+      .catch(err => {
+        console.error("Error fetching staff data:", err);
+        setCurrentView("staff");
+      });
+  } else {
+    setCurrentStaffMember(null);
+    setCurrentView("staff");
+  }
+
+  setLoading(false);
+}
+
 
   // Data loading effect
   useEffect(() => {
@@ -1178,7 +1193,7 @@ const RosteringApp = () => {
   };
 
   // Show loading screen
-  if (loading) {
+  if (loading || currentView === null) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
