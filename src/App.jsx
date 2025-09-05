@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar, Clock, Users, Plus, X, Play, Square, User, Settings, Home, ChevronLeft, ChevronRight, LogOut, Mail, Lock, Eye, EyeOff } from 'lucide-react';
-import { staffService, shiftsService, subscriptions } from './lib/supabaseClient';
+import { staffService, shiftsService, subscriptions, clockService } from './lib/supabaseClient';
 import { supabase } from './lib/supabaseClient';
 
 const timeSlots = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`);
@@ -171,6 +171,33 @@ const RosteringApp = () => {
     })
   };
 
+  const loadCurrentClockStatus = async () => {
+  console.log('Loading current clock status for:', currentStaffMember);
+  
+  if (!currentStaffMember) return;
+  
+  try {
+    const status = await clockService.getTodayStatus(currentStaffMember.id);
+    console.log('Current status from database:', status);
+    
+    if (status) {
+      const clockTime = new Date(status.clock_in_time).toLocaleTimeString();
+      setClockedIn(prev => ({
+        ...prev,
+        [currentStaffMember.id]: { 
+          clockedIn: true, 
+          time: clockTime
+        }
+      }));
+      console.log('Clock status loaded and state updated');
+    } else {
+      console.log('No active clock entry found');
+    }
+  } catch (error) {
+    console.error('Error loading clock status:', error);
+  }
+};
+
   // Helper functions for date management
   const getWeekStart = (date) => {
     const d = new Date(date);
@@ -211,6 +238,12 @@ const RosteringApp = () => {
   };
 
   const [start, end] = slotRanges[serviceView];
+
+  useEffect(() => {
+  if (currentStaffMember) {
+    loadCurrentClockStatus();
+  }
+}, [currentStaffMember]);
 
   // Authentication effects
   useEffect(() => {
@@ -433,7 +466,7 @@ function handleSessionChange(session, source) {
     } finally {
       setShowDurationPopup(false);
       setPendingShift(null);
-      setShiftDuration(8);
+      setShiftDuration(5);
     }
   };
 
@@ -461,15 +494,53 @@ function handleSessionChange(session, source) {
     }
   };
 
-  const handleClockInOut = (staffId, action) => {
+  const handleClockInOut = async (staffId, action) => {
+  console.log('Clock action triggered:', { staffId, action, currentStaffMember });
+  
+  try {
     const now = new Date();
     const timeString = now.toLocaleTimeString();
     
-    setClockedIn(prev => ({
-      ...prev,
-      [staffId]: action === 'in' ? { clockedIn: true, time: timeString } : { clockedIn: false, time: timeString }
-    }));
-  };
+    if (action === 'in') {
+      console.log('Attempting to clock in...');
+      
+      // Optionally find today's shift to link the clock entry
+      const today = now.toISOString().split('T')[0];
+      const todayShift = shifts.find(shift => 
+        shift.staffId === staffId && shift.date === today
+      );
+      
+      console.log('Today shift found:', todayShift);
+      
+      const result = await clockService.clockIn(staffId, todayShift?.id || null);
+      console.log('Clock in result:', result);
+      
+      setClockedIn(prev => ({
+        ...prev,
+        [staffId]: { clockedIn: true, time: timeString }
+      }));
+      
+      console.log('State updated for clock in');
+      
+    } else {
+      console.log('Attempting to clock out...');
+      
+      const result = await clockService.clockOut(staffId);
+      console.log('Clock out result:', result);
+      
+      setClockedIn(prev => ({
+        ...prev,
+        [staffId]: { clockedIn: false, time: timeString }
+      }));
+      
+      console.log('State updated for clock out');
+    }
+  } catch (error) {
+    console.error('Error with clock in/out:', error);
+    // Show error to user
+    alert(`Error: ${error.message}`);
+  }
+};
 
   const getShiftsForTimeSlot = (dayIndex, timeSlot) => {
     const weekDates = getWeekDates(currentWeekStart);
@@ -549,7 +620,7 @@ function handleSessionChange(session, source) {
               onClick={() => {
                 setShowDurationPopup(false);
                 setPendingShift(null);
-                setShiftDuration(8);
+                setShiftDuration(5);
               }}
               className="text-gray-400 hover:text-gray-600"
             >
@@ -626,7 +697,7 @@ function handleSessionChange(session, source) {
                 onClick={() => {
                   setShowDurationPopup(false);
                   setPendingShift(null);
-                  setShiftDuration(8);
+                  setShiftDuration(5);
                 }}
                 className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium"
               >

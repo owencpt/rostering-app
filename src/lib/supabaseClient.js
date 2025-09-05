@@ -307,173 +307,75 @@ export const shiftsService = {
   }
 }
 
+// 
+
+// Add this to your supabaseClient.js file
 export const clockService = {
-  // Get today's clock entries for all staff
-  async getTodaysClockEntries(date) {
+  async clockIn(staffId, shiftId = null) {
+    const now = new Date();
+    const date = now.toISOString().split('T')[0]; // Get YYYY-MM-DD format
+    
     const { data, error } = await supabase
       .from('clock_entries')
-      .select(`
-        *,
-        staff:staff_id (
-          id,
-          name,
-          avatar,
-          user_id
-        ),
-        shift:shift_id (
-          id,
-          start_time,
-          end_time
-        )
-      `)
-      .eq('date', date)
+      .insert({
+        staff_id: staffId,
+        shift_id: shiftId,
+        clock_in_time: now.toISOString(),
+        date: date
+      })
+      .select()
+      .single();
     
-    if (error) throw error
-    return data
+    if (error) throw error;
+    return data;
   },
 
-  // Get clock entries for specific staff member
-  async getClockEntriesForStaff(staffId, startDate, endDate) {
-    const { data, error } = await supabase
+  async clockOut(staffId) {
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Find today's clock-in entry without clock-out
+    const { data: activeEntry, error: findError } = await supabase
       .from('clock_entries')
-      .select(`
-        *,
-        staff:staff_id (
-          id,
-          name,
-          avatar,
-          user_id
-        ),
-        shift:shift_id (
-          id,
-          start_time,
-          end_time
-        )
-      `)
+      .select('*')
       .eq('staff_id', staffId)
-      .gte('date', startDate)
-      .lte('date', endDate)
-      .order('date', { ascending: false })
+      .eq('date', today)
+      .is('clock_out_time', null)
       .order('clock_in_time', { ascending: false })
-    
-    if (error) throw error
-    return data
+      .limit(1)
+      .single();
+
+    if (findError) throw findError;
+
+    // Update with clock out time
+    const { data, error } = await supabase
+      .from('clock_entries')
+      .update({
+        clock_out_time: new Date().toISOString()
+      })
+      .eq('id', activeEntry.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
   },
 
-  // Clock in/out
-  async clockInOut(staffId, action, shiftId = null) {
-    const now = new Date()
-    const today = now.toISOString().split('T')[0]
+  async getTodayStatus(staffId) {
+    const today = new Date().toISOString().split('T')[0];
     
-    if (action === 'in') {
-      // Create new clock entry
-      const { data, error } = await supabase
-        .from('clock_entries')
-        .insert([{
-          staff_id: staffId,
-          shift_id: shiftId,
-          clock_in_time: now.toISOString(),
-          date: today
-        }])
-        .select(`
-          *,
-          staff:staff_id (
-            id,
-            name,
-            avatar
-          )
-        `)
-        .single()
-      
-      if (error) throw error
-      return data
-    } else {
-      // Update existing clock entry with clock out
-      const { data, error } = await supabase
-        .from('clock_entries')
-        .update({ clock_out_time: now.toISOString() })
-        .eq('staff_id', staffId)
-        .eq('date', today)
-        .is('clock_out_time', null)
-        .select(`
-          *,
-          staff:staff_id (
-            id,
-            name,
-            avatar
-          )
-        `)
-        .single()
-      
-      if (error) throw error
-      return data
-    }
-  },
-
-  // Get current clock status for staff
-  async getCurrentClockStatus(staffId, date) {
     const { data, error } = await supabase
       .from('clock_entries')
       .select('*')
       .eq('staff_id', staffId)
-      .eq('date', date)
+      .eq('date', today)
       .is('clock_out_time', null)
       .order('clock_in_time', { ascending: false })
-      .limit(1)
-    
-    if (error) throw error
-    return data[0] || null
-  },
+      .limit(1);
 
-  // Create clock entry (manual entry by admin)
-  async createClockEntry(clockData) {
-    const { data, error } = await supabase
-      .from('clock_entries')
-      .insert([clockData])
-      .select(`
-        *,
-        staff:staff_id (
-          id,
-          name,
-          avatar
-        )
-      `)
-      .single()
-    
-    if (error) throw error
-    return data
-  },
-
-  // Update clock entry
-  async updateClockEntry(id, updateData) {
-    const { data, error } = await supabase
-      .from('clock_entries')
-      .update(updateData)
-      .eq('id', id)
-      .select(`
-        *,
-        staff:staff_id (
-          id,
-          name,
-          avatar
-        )
-      `)
-      .single()
-    
-    if (error) throw error
-    return data
-  },
-
-  // Delete clock entry
-  async deleteClockEntry(id) {
-    const { error } = await supabase
-      .from('clock_entries')
-      .delete()
-      .eq('id', id)
-    
-    if (error) throw error
+    if (error) throw error;
+    return data.length > 0 ? data[0] : null;
   }
-}
+};
 
 // Utility functions for data transformation
 export const dataTransformers = {
