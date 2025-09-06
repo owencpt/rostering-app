@@ -177,25 +177,75 @@ const RosteringApp = () => {
   if (!currentStaffMember) return;
   
   try {
-    const status = await clockService.getTodayStatus(currentStaffMember.id);
+    // Use your existing getTodayStatusComplete function
+    const status = await clockService.getTodayStatusComplete(currentStaffMember.id);
     console.log('Current status from database:', status);
     
-    if (status) {
-      const clockTime = new Date(status.clock_in_time).toLocaleTimeString();
-      setClockedIn(prev => ({
-        ...prev,
-        [currentStaffMember.id]: { 
-          clockedIn: true, 
-          time: clockTime
-        }
-      }));
-      console.log('Clock status loaded and state updated');
-    } else {
-      console.log('No active clock entry found');
-    }
+    setClockStatus(prev => ({
+      ...prev,
+      [currentStaffMember.id]: status
+    }));
+    
   } catch (error) {
     console.error('Error loading clock status:', error);
   }
+};
+
+// 3. Add break timer management functions
+const startBreakTimer = (staffId) => {
+  const now = Date.now();
+  setBreakTimers(prev => ({
+    ...prev,
+    [staffId]: {
+      ...prev[staffId],
+      isOnBreak: true,
+      currentBreakStart: now,
+      totalBreakTime: prev[staffId]?.totalBreakTime || 0
+    }
+  }));
+};
+
+const endBreakTimer = (staffId) => {
+  setBreakTimers(prev => {
+    const current = prev[staffId];
+    if (!current || !current.isOnBreak || !current.currentBreakStart) {
+      return prev;
+    }
+    
+    const breakDuration = Date.now() - current.currentBreakStart;
+    
+    return {
+      ...prev,
+      [staffId]: {
+        ...current,
+        isOnBreak: false,
+        currentBreakStart: null,
+        totalBreakTime: current.totalBreakTime + breakDuration
+      }
+    };
+  });
+};
+
+const getTotalBreakMinutes = (staffId) => {
+  const breakData = breakTimers[staffId];
+  if (!breakData) return 0;
+  
+  let total = breakData.totalBreakTime || 0;
+  
+  // Add current break time if on break
+  if (breakData.isOnBreak && breakData.currentBreakStart) {
+    total += Date.now() - breakData.currentBreakStart;
+  }
+  
+  return Math.round(total / (1000 * 60)); // Convert to minutes
+};
+
+const resetBreakTimer = (staffId) => {
+  setBreakTimers(prev => {
+    const newState = { ...prev };
+    delete newState[staffId];
+    return newState;
+  });
 };
 
   // Helper functions for date management
@@ -231,6 +281,9 @@ const RosteringApp = () => {
   const [currentWeekStart, setCurrentWeekStart] = useState(getWeekStart(new Date()));
   const [serviceView, setServiceView] = useState('lunch');
   const [currentStaffMember, setCurrentStaffMember] = useState(null);
+  const [clockStatus, setClockStatus] = useState({});
+  const [breakTimers, setBreakTimers] = useState({}); // Track break times locally
+
 
   const slotRanges = {
     lunch: [9, 14],
@@ -498,48 +551,61 @@ function handleSessionChange(session, source) {
   console.log('Clock action triggered:', { staffId, action, currentStaffMember });
   
   try {
-    const now = new Date();
-    const timeString = now.toLocaleTimeString();
-    
     if (action === 'in') {
       console.log('Attempting to clock in...');
       
-      // Optionally find today's shift to link the clock entry
-      const today = now.toISOString().split('T')[0];
+      const today = new Date().toISOString().split('T')[0];
       const todayShift = shifts.find(shift => 
         shift.staffId === staffId && shift.date === today
       );
       
-      console.log('Today shift found:', todayShift);
+      await clockService.clockIn(staffId, todayShift?.id || null);
       
-      const result = await clockService.clockIn(staffId, todayShift?.id || null);
-      console.log('Clock in result:', result);
+      // Reset break timer when clocking in
+      resetBreakTimer(staffId);
       
-      setClockedIn(prev => ({
-        ...prev,
-        [staffId]: { clockedIn: true, time: timeString }
-      }));
-      
-      console.log('State updated for clock in');
-      
-    } else {
+    } else if (action === 'out') {
       console.log('Attempting to clock out...');
       
-      const result = await clockService.clockOut(staffId);
-      console.log('Clock out result:', result);
+      // Get total break time and send to database
+      const totalBreakMinutes = getTotalBreakMinutes(staffId);
       
-      setClockedIn(prev => ({
-        ...prev,
-        [staffId]: { clockedIn: false, time: timeString }
-      }));
+      await clockService.clockOut(staffId, totalBreakMinutes);
       
-      console.log('State updated for clock out');
+      // Reset break timer after clocking out
+      resetBreakTimer(staffId);
+      
+    } else if (action === 'start_break') {
+      console.log('Starting break...');
+      startBreakTimer(staffId);
+      
+    } else if (action === 'end_break') {
+      console.log('Ending break...');
+      endBreakTimer(staffId);
     }
+    
+    // Reload status after clock in/out (but not for breaks)
+    if (action === 'in' || action === 'out') {
+      await loadCurrentClockStatus();
+    }
+    
   } catch (error) {
-    console.error('Error with clock in/out:', error);
-    // Show error to user
+    console.error('Error with clock action:', error);
     alert(`Error: ${error.message}`);
   }
+};
+
+  const formatBreakTime = (staffId) => {
+  const totalMinutes = getTotalBreakMinutes(staffId);
+  if (totalMinutes === 0) return '';
+  
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  
+  if (hours > 0) {
+    return `${hours}h ${minutes}m break taken`;
+  }
+  return `${minutes}m break taken`;
 };
 
   const getShiftsForTimeSlot = (dayIndex, timeSlot) => {
@@ -1018,50 +1084,131 @@ function handleSessionChange(session, source) {
             {todayShifts.length > 0 ? (
               <div className="space-y-4">
                 {todayShifts.map(shift => {
-                  const clockStatus = clockedIn[shift.staffId];
-                  
-                  return (
-                    <div key={shift.id} className="p-4 rounded-lg border-2 border-blue-200 bg-blue-50">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h3 className="font-semibold text-gray-900">{currentStaffMember?.name}</h3>
-                          <p className="text-gray-600">{shift.role}</p>
-                          <p className="text-sm text-gray-500">{shift.startTime} - {shift.endTime}</p>
-                        </div>
-                        
-                        <div className="flex items-center space-x-3">
-                          <div className="text-right">
-                            {clockStatus && (
-                              <p className="text-sm text-gray-600">
-                                {clockStatus.clockedIn ? 'Clocked in' : 'Clocked out'} at {clockStatus.time}
-                              </p>
-                            )}
-                          </div>
-                          <button
-                            onClick={() => handleClockInOut(shift.staffId, clockStatus?.clockedIn ? 'out' : 'in')}
-                            className={`px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors ${
-                              clockStatus?.clockedIn 
-                                ? 'bg-red-600 hover:bg-red-700 text-white' 
-                                : 'bg-green-600 hover:bg-green-700 text-white'
-                            }`}
-                          >
-                            {clockStatus?.clockedIn ? (
-                              <>
-                                <Square className="w-4 h-4" />
-                                <span>Clock Out</span>
-                              </>
-                            ) : (
-                              <>
-                                <Play className="w-4 h-4" />
-                                <span>Clock In</span>
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+  const currentClockStatus = clockStatus[shift.staffId];
+  const breakData = breakTimers[shift.staffId];
+  
+  // Determine what buttons to show
+  const getActionButtons = () => {
+    if (!currentClockStatus || !currentClockStatus.isClockedIn) {
+      if (currentClockStatus?.canModifyShift) {
+        // Clocked out - show modify shift
+        return (
+          <button
+            onClick={() => handleModifyShift(shift.staffId)}
+            className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            <Settings className="w-4 h-4" />
+            <span>Modify Shift</span>
+          </button>
+        );
+      } else {
+        // Not clocked in yet
+        return (
+          <button
+            onClick={() => handleClockInOut(shift.staffId, 'in')}
+            className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-green-600 hover:bg-green-700 text-white"
+          >
+            <Play className="w-4 h-4" />
+            <span>Clock In</span>
+          </button>
+        );
+      }
+    }
+    
+    // Clocked in
+    if (breakData?.isOnBreak) {
+      // On break - show end break only
+      return (
+        <button
+          onClick={() => handleClockInOut(shift.staffId, 'end_break')}
+          className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-orange-600 hover:bg-orange-700 text-white"
+        >
+          <Play className="w-4 h-4" />
+          <span>End Break</span>
+        </button>
+      );
+    } else {
+      // Clocked in, not on break - show start break and clock out
+      return (
+        <div className="flex space-x-2">
+          <button
+            onClick={() => handleClockInOut(shift.staffId, 'start_break')}
+            className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-yellow-600 hover:bg-yellow-700 text-white"
+          >
+            <Square className="w-4 h-4" />
+            <span>Start Break</span>
+          </button>
+          <button
+            onClick={() => handleClockInOut(shift.staffId, 'out')}
+            className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-red-600 hover:bg-red-700 text-white"
+          >
+            <Square className="w-4 h-4" />
+            <span>Clock Out</span>
+          </button>
+        </div>
+      );
+    }
+  };
+
+  // Get status message
+  const getStatusMessage = () => {
+    if (!currentClockStatus) {
+      return 'Not clocked in';
+    }
+    
+    if (currentClockStatus.canModifyShift) {
+      const clockOutTime = new Date(currentClockStatus.clock_out_time).toLocaleTimeString();
+      const totalBreak = currentClockStatus.total_break_duration_minutes;
+      let message = `Clocked out at ${clockOutTime}`;
+      if (totalBreak > 0) {
+        const hours = Math.floor(totalBreak / 60);
+        const minutes = totalBreak % 60;
+        const breakText = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+        message += ` (${breakText} break taken)`;
+      }
+      return message;
+    }
+    
+    if (breakData?.isOnBreak) {
+      return 'Currently on break';
+    }
+    
+    if (currentClockStatus.isClockedIn) {
+      const clockInTime = new Date(currentClockStatus.clock_in_time).toLocaleTimeString();
+      let message = `Clocked in at ${clockInTime}`;
+      
+      const breakText = formatBreakTime(shift.staffId);
+      if (breakText) {
+        message += ` (${breakText})`;
+      }
+      
+      return message;
+    }
+    
+    return 'Status unknown';
+  };
+
+  return (
+    <div key={shift.id} className="p-4 rounded-lg border-2 border-blue-200 bg-blue-50">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-semibold text-gray-900">{currentStaffMember?.name}</h3>
+          <p className="text-gray-600">{shift.role}</p>
+          <p className="text-sm text-gray-500">{shift.startTime} - {shift.endTime}</p>
+        </div>
+        
+        <div className="flex items-center space-x-3">
+          <div className="text-right">
+            <p className="text-sm text-gray-600">
+              {getStatusMessage()}
+            </p>
+          </div>
+          {getActionButtons()}
+        </div>
+      </div>
+    </div>
+  );
+})}
               </div>
             ) : (
               <div className="text-center py-8 text-gray-500">

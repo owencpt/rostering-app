@@ -330,7 +330,8 @@ export const clockService = {
     return data;
   },
 
-  async clockOut(staffId) {
+  // Updated clockOut function to accept total break duration
+  async clockOut(staffId, totalBreakMinutes = 0) {
     const today = new Date().toISOString().split('T')[0];
     
     // Find today's clock-in entry without clock-out
@@ -346,11 +347,12 @@ export const clockService = {
 
     if (findError) throw findError;
 
-    // Update with clock out time
+    // Update with clock out time and break duration
     const { data, error } = await supabase
       .from('clock_entries')
       .update({
-        clock_out_time: new Date().toISOString()
+        clock_out_time: new Date().toISOString(),
+        total_break_duration_minutes: totalBreakMinutes
       })
       .eq('id', activeEntry.id)
       .select()
@@ -374,6 +376,30 @@ export const clockService = {
 
     if (error) throw error;
     return data.length > 0 ? data[0] : null;
+  },
+
+  // New function for getting comprehensive status including completed shifts
+  async getTodayStatusComplete(staffId) {
+    const today = new Date().toISOString().split('T')[0];
+    
+    const { data, error } = await supabase
+      .from('clock_entries')
+      .select('*')
+      .eq('staff_id', staffId)
+      .eq('date', today)
+      .order('clock_in_time', { ascending: false })
+      .limit(1);
+
+    if (error) throw error;
+    
+    if (data.length === 0) return null;
+    
+    const entry = data[0];
+    return {
+      ...entry,
+      isClockedIn: !!entry.clock_in_time && !entry.clock_out_time,
+      canModifyShift: !!entry.clock_out_time
+    };
   }
 };
 
