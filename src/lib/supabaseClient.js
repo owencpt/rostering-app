@@ -313,7 +313,13 @@ export const shiftsService = {
 export const clockService = {
   async clockIn(staffId, shiftId = null) {
     const now = new Date();
-    const date = now.toISOString().split('T')[0]; // Get YYYY-MM-DD format
+    const date = now.toISOString().split('T')[0];
+    
+    // Check if staff is already clocked in today
+    const existingEntry = await this.getTodayStatus(staffId);
+    if (existingEntry) {
+      throw new Error('Already clocked in for another shift today. Please clock out first.');
+    }
     
     const { data, error } = await supabase
       .from('clock_entries')
@@ -330,11 +336,10 @@ export const clockService = {
     return data;
   },
 
-  // Updated clockOut function to accept total break duration
   async clockOut(staffId, totalBreakMinutes = 0) {
     const today = new Date().toISOString().split('T')[0];
     
-    // Find today's clock-in entry without clock-out
+    // Find today's active clock-in entry
     const { data: activeEntry, error: findError } = await supabase
       .from('clock_entries')
       .select('*')
@@ -347,7 +352,6 @@ export const clockService = {
 
     if (findError) throw findError;
 
-    // Update with clock out time and break duration
     const { data, error } = await supabase
       .from('clock_entries')
       .update({
@@ -378,7 +382,6 @@ export const clockService = {
     return data.length > 0 ? data[0] : null;
   },
 
-  // New function for getting comprehensive status including completed shifts
   async getTodayStatusComplete(staffId) {
     const today = new Date().toISOString().split('T')[0];
     
@@ -386,6 +389,30 @@ export const clockService = {
       .from('clock_entries')
       .select('*')
       .eq('staff_id', staffId)
+      .eq('date', today)
+      .order('clock_in_time', { ascending: false })
+      .limit(1);
+
+    if (error) throw error;
+    
+    if (data.length === 0) return null;
+    
+    const entry = data[0];
+    return {
+      ...entry,
+      isClockedIn: !!entry.clock_in_time && !entry.clock_out_time,
+      canModifyShift: !!entry.clock_out_time
+    };
+  }, 
+
+  async getShiftStatus(staffId, shiftId) {
+    const today = new Date().toISOString().split('T')[0];
+    
+    const { data, error } = await supabase
+      .from('clock_entries')
+      .select('*')
+      .eq('staff_id', staffId)
+      .eq('shift_id', shiftId)
       .eq('date', today)
       .order('clock_in_time', { ascending: false })
       .limit(1);

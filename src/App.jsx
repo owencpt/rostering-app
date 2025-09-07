@@ -151,6 +151,7 @@ const RosteringApp = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
+  
 
   const dataTransformers = {
     staffToAppFormat: (row) => ({
@@ -177,14 +178,21 @@ const RosteringApp = () => {
   if (!currentStaffMember) return;
   
   try {
-    // Use your existing getTodayStatusComplete function
-    const status = await clockService.getTodayStatusComplete(currentStaffMember.id);
-    console.log('Current status from database:', status);
-    
-    setClockStatus(prev => ({
-      ...prev,
-      [currentStaffMember.id]: status
-    }));
+    // Get today's shifts for current staff member
+    const today = formatDate(new Date());
+    const todayShifts = shifts.filter(shift => 
+      shift.staffId === currentStaffMember.id && shift.date === today
+    );
+
+    // Load status for each shift individually
+    for (const shift of todayShifts) {
+      const shiftStatus = await clockService.getShiftStatus(currentStaffMember.id, shift.id);
+      
+      setClockStatus(prev => ({
+        ...prev,
+        [shift.id]: shiftStatus
+      }));
+    }
     
   } catch (error) {
     console.error('Error loading clock status:', error);
@@ -547,41 +555,39 @@ function handleSessionChange(session, source) {
     }
   };
 
-  const handleClockInOut = async (staffId, action) => {
-  console.log('Clock action triggered:', { staffId, action, currentStaffMember });
+const handleClockInOut = async (shiftId, action) => {
+  const shift = shifts.find(s => s.id === shiftId);
+  if (!shift) return;
+  
+  console.log('Clock action triggered:', { shiftId, action, shift });
   
   try {
     if (action === 'in') {
       console.log('Attempting to clock in...');
       
-      const today = new Date().toISOString().split('T')[0];
-      const todayShift = shifts.find(shift => 
-        shift.staffId === staffId && shift.date === today
-      );
-      
-      await clockService.clockIn(staffId, todayShift?.id || null);
+      await clockService.clockIn(shift.staffId, shiftId);
       
       // Reset break timer when clocking in
-      resetBreakTimer(staffId);
+      resetBreakTimer(shift.staffId);
       
     } else if (action === 'out') {
       console.log('Attempting to clock out...');
       
       // Get total break time and send to database
-      const totalBreakMinutes = getTotalBreakMinutes(staffId);
+      const totalBreakMinutes = getTotalBreakMinutes(shift.staffId);
       
-      await clockService.clockOut(staffId, totalBreakMinutes);
+      await clockService.clockOut(shift.staffId, totalBreakMinutes);
       
       // Reset break timer after clocking out
-      resetBreakTimer(staffId);
+      resetBreakTimer(shift.staffId);
       
     } else if (action === 'start_break') {
       console.log('Starting break...');
-      startBreakTimer(staffId);
+      startBreakTimer(shift.staffId);
       
     } else if (action === 'end_break') {
       console.log('Ending break...');
-      endBreakTimer(staffId);
+      endBreakTimer(shift.staffId);
     }
     
     // Reload status after clock in/out (but not for breaks)
@@ -1084,70 +1090,88 @@ function handleSessionChange(session, source) {
             {todayShifts.length > 0 ? (
               <div className="space-y-4">
                 {todayShifts.map(shift => {
-  const currentClockStatus = clockStatus[shift.staffId];
-  const breakData = breakTimers[shift.staffId];
+  const currentClockStatus = clockStatus[shift.id]; // Now using shift ID
+  const breakData = breakTimers[shift.staffId]; // Still using staff ID for breaks
+  
+  // Check if staff is currently clocked into ANY other shift
+  const staffActiveClockedShift = Object.entries(clockStatus).find(([shiftId, status]) => {
+    return status && 
+           status.staff_id === shift.staffId && 
+           shiftId !== shift.id.toString() &&
+           status.clock_in_time && 
+           !status.clock_out_time;
+  });
   
   // Determine what buttons to show
   const getActionButtons = () => {
-    if (!currentClockStatus || !currentClockStatus.isClockedIn) {
-      if (currentClockStatus?.canModifyShift) {
-        // Clocked out - show modify shift
+    // If this shift has been completed (clocked out), always show modify
+    if (currentClockStatus?.canModifyShift) {
+      return (
+        <button
+          onClick={() => handleModifyShift(shift.id)}
+          className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-blue-600 hover:bg-blue-700 text-white"
+        >
+          <Settings className="w-4 h-4" />
+          <span>Modify Shift</span>
+        </button>
+      );
+    }
+    
+    // If staff is clocked into a different shift, show disabled state
+    if (staffActiveClockedShift) {
+      return (
+        <div className="px-4 py-2 bg-gray-100 text-gray-500 rounded-lg text-sm">
+          Cannot clock in - Currently clocked into another shift
+        </div>
+      );
+    }
+    
+    // If currently clocked into THIS shift
+    if (currentClockStatus?.isClockedIn && !currentClockStatus?.canModifyShift) {
+      if (breakData?.isOnBreak) {
+        // On break - show end break only
         return (
           <button
-            onClick={() => handleModifyShift(shift.staffId)}
-            className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-blue-600 hover:bg-blue-700 text-white"
+            onClick={() => handleClockInOut(shift.id, 'end_break')}
+            className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-orange-600 hover:bg-orange-700 text-white"
           >
-            <Settings className="w-4 h-4" />
-            <span>Modify Shift</span>
+            <Play className="w-4 h-4" />
+            <span>End Break</span>
           </button>
         );
       } else {
-        // Not clocked in yet
+        // Clocked in, not on break - show start break and clock out
         return (
-          <button
-            onClick={() => handleClockInOut(shift.staffId, 'in')}
-            className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-green-600 hover:bg-green-700 text-white"
-          >
-            <Play className="w-4 h-4" />
-            <span>Clock In</span>
-          </button>
+          <div className="flex space-x-2">
+            <button
+              onClick={() => handleClockInOut(shift.id, 'start_break')}
+              className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-yellow-600 hover:bg-yellow-700 text-white"
+            >
+              <Square className="w-4 h-4" />
+              <span>Start Break</span>
+            </button>
+            <button
+              onClick={() => handleClockInOut(shift.id, 'out')}
+              className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-red-600 hover:bg-red-700 text-white"
+            >
+              <Square className="w-4 h-4" />
+              <span>Clock Out</span>
+            </button>
+          </div>
         );
       }
     }
     
-    // Clocked in
-    if (breakData?.isOnBreak) {
-      // On break - show end break only
-      return (
-        <button
-          onClick={() => handleClockInOut(shift.staffId, 'end_break')}
-          className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-orange-600 hover:bg-orange-700 text-white"
-        >
-          <Play className="w-4 h-4" />
-          <span>End Break</span>
-        </button>
-      );
-    } else {
-      // Clocked in, not on break - show start break and clock out
-      return (
-        <div className="flex space-x-2">
-          <button
-            onClick={() => handleClockInOut(shift.staffId, 'start_break')}
-            className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-yellow-600 hover:bg-yellow-700 text-white"
-          >
-            <Square className="w-4 h-4" />
-            <span>Start Break</span>
-          </button>
-          <button
-            onClick={() => handleClockInOut(shift.staffId, 'out')}
-            className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-red-600 hover:bg-red-700 text-white"
-          >
-            <Square className="w-4 h-4" />
-            <span>Clock Out</span>
-          </button>
-        </div>
-      );
-    }
+    // Default: not clocked in yet and no other active shifts
+    return (
+      <button
+        onClick={() => handleClockInOut(shift.id, 'in')}
+        className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-green-600 hover:bg-green-700 text-white"
+      >
+        <Play className="w-4 h-4" />
+        <span>Clock In</span>
+      </button>
+    );
   };
 
   // Get status message
@@ -1189,7 +1213,9 @@ function handleSessionChange(session, source) {
   };
 
   return (
-    <div key={shift.id} className="p-4 rounded-lg border-2 border-blue-200 bg-blue-50">
+    <div key={shift.id} className={`p-4 rounded-lg border-2 ${
+      staffActiveClockedShift ? 'border-gray-300 bg-gray-50' : 'border-blue-200 bg-blue-50'
+    }`}>
       <div className="flex items-center justify-between">
         <div>
           <h3 className="font-semibold text-gray-900">{currentStaffMember?.name}</h3>
