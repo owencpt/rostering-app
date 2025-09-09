@@ -311,6 +311,8 @@ export const shiftsService = {
 
 // Add this to your supabaseClient.js file
 export const clockService = {
+
+  
   async clockIn(staffId, shiftId = null) {
     const now = new Date();
     const date = now.toISOString().split('T')[0];
@@ -427,6 +429,42 @@ export const clockService = {
       isClockedIn: !!entry.clock_in_time && !entry.clock_out_time,
       canModifyShift: !!entry.clock_out_time
     };
+  },
+
+    async getClockEntries(startDate, endDate) {
+    const { data, error } = await supabase
+      .from('clock_entries')
+      .select(`
+        id,
+        staff_id,
+        shift_id,
+        clock_in_time,
+        clock_out_time,
+        total_break_duration_minutes,
+        date,
+        staff:staff_id (
+          id,
+          name,
+          email,
+          role,
+          avatar,
+          base_pay
+        ),
+        shift:shift_id (
+          id,
+          date,
+          start_time,
+          end_time,
+          role
+        )
+      `)
+      .gte('date', startDate)
+      .lte('date', endDate)
+      .order('date')
+      .order('clock_in_time');
+
+    if (error) throw error;
+    return data;
   }
 };
 

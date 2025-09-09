@@ -160,7 +160,9 @@ const RosteringApp = () => {
       role: row.role,
       email: row.email,
       avatar: row.avatar,
-      userId: row.user_id
+      userId: row.user_id,
+      base_pay: row.base_pay  // Add this line
+
     }),
     shiftToAppFormat: (row) => ({
       id: row.id,
@@ -171,6 +173,15 @@ const RosteringApp = () => {
       role: row.role
     })
   };
+
+  const getCurrentPayPeriodId = () => {
+    const today = new Date();
+    const day = today.getDate();
+    const year = today.getFullYear();
+    const month = (today.getMonth() + 1).toString().padStart(2, "0");
+    return day <= 14 ? `${year}-${month}-1` : `${year}-${month}-15`;
+  };
+
 
   const loadCurrentClockStatus = async () => {
   console.log('Loading current clock status for:', currentStaffMember);
@@ -291,6 +302,11 @@ const resetBreakTimer = (staffId) => {
   const [currentStaffMember, setCurrentStaffMember] = useState(null);
   const [clockStatus, setClockStatus] = useState({});
   const [breakTimers, setBreakTimers] = useState({}); // Track break times locally
+  const [clockEntries, setClockEntries] = useState([]);
+
+
+  const [selectedPayPeriod, setSelectedPayPeriod] = useState(getCurrentPayPeriodId());
+
 
 
   const slotRanges = {
@@ -299,6 +315,7 @@ const resetBreakTimer = (staffId) => {
   };
 
   const [start, end] = slotRanges[serviceView];
+
 
   useEffect(() => {
   if (currentStaffMember) {
@@ -336,6 +353,8 @@ const resetBreakTimer = (staffId) => {
 }, []);
 
 function handleSessionChange(session, source) {
+  console.log(`handleSessionChange called with source: ${source}, currentView: ${currentView}`);
+  
   setSession(session);
   setUser(session?.user ?? null);
   setShowAuth(!session);
@@ -346,19 +365,27 @@ function handleSessionChange(session, source) {
       .then(staffData => {
         const userStaff = staffData.find(s => s.user_id === session.user.id);
         setCurrentStaffMember(userStaff);
-        setCurrentView(
-          userStaff?.role === "admin" || userStaff?.role === "manager"
-            ? "admin"
-            : "staff"
-        );
+        
+        // Only set default view on true initial load or when explicitly signing in
+        if (source === "initial" && currentView === null) {
+          setCurrentView(
+            userStaff?.role === "admin" || userStaff?.role === "manager"
+              ? "admin"
+              : "staff"
+          );
+        }
       })
       .catch(err => {
         console.error("Error fetching staff data:", err);
-        setCurrentView("staff");
+        if (source === "initial" && currentView === null) {
+          setCurrentView("staff");
+        }
       });
   } else {
     setCurrentStaffMember(null);
-    setCurrentView("staff");
+    if (source === "initial" && currentView === null) {
+      setCurrentView("staff");
+    }
   }
 
   setLoading(false);
@@ -401,6 +428,65 @@ function handleSessionChange(session, source) {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+  if (!user || !selectedPayPeriod) return;
+
+  const fetchClockEntries = async () => {
+    try {
+      // Find the selected pay period object
+      const generatePayPeriods = () => {
+        const periods = [];
+        const currentDate = new Date();
+
+        for (let i = 5; i >= -6; i--) {
+          const baseDate = new Date(
+            currentDate.getFullYear(),
+            currentDate.getMonth() - Math.floor(i / 2),
+            1
+          );
+
+          if (i % 2 === 0 || i === 5) {
+            const start = new Date(baseDate.getFullYear(), baseDate.getMonth(), 1);
+            const end = new Date(baseDate.getFullYear(), baseDate.getMonth(), 14);
+            periods.push({
+              id: `${baseDate.getFullYear()}-${(baseDate.getMonth() + 1).toString().padStart(2, "0")}-1`,
+              start,
+              end,
+            });
+          }
+
+          if (i % 2 !== 0 || i === 5) {
+            const start = new Date(baseDate.getFullYear(), baseDate.getMonth(), 15);
+            const end = new Date(baseDate.getFullYear(), baseDate.getMonth() + 1, 0);
+            periods.push({
+              id: `${baseDate.getFullYear()}-${(baseDate.getMonth() + 1).toString().padStart(2, "0")}-15`,
+              start,
+              end,
+            });
+          }
+        }
+        return periods.sort((a, b) => a.start - b.start);
+      };
+
+      const payPeriods = generatePayPeriods();
+      const selectedPeriod = payPeriods.find(p => p.id === selectedPayPeriod);
+      
+      if (selectedPeriod) {
+        const startDate = selectedPeriod.start.toISOString().split('T')[0];
+        const endDate = selectedPeriod.end.toISOString().split('T')[0];
+        
+        const data = await clockService.getClockEntries(startDate, endDate);
+        setClockEntries(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch clock entries:', error);
+      setClockEntries([]);
+    }
+  };
+
+  fetchClockEntries();
+}, [selectedPayPeriod, user]);
 
   // Authentication functions
   const handleAuth = async (e) => {
@@ -1283,6 +1369,330 @@ const handleClockInOut = async (shiftId, action) => {
     );
   };
 
+  // Add this PaymentView component inside RosteringApp, alongside AdminView and StaffView
+  // Add this PaymentView component inside RosteringApp, alongside AdminView and StaffView
+
+const PaymentView = ({
+  staff,
+  shifts,
+  clockEntries,
+  selectedPayPeriod,
+  setSelectedPayPeriod,
+}) => {
+  // Generate pay periods
+
+
+    const getCurrentPayPeriodId = () => {
+    const today = new Date();
+    const day = today.getDate();
+    const year = today.getFullYear();
+    const month = (today.getMonth() + 1).toString().padStart(2, "0");
+    return day <= 14 ? `${year}-${month}-1` : `${year}-${month}-15`;
+  };
+
+
+  const generatePayPeriods = () => {
+    const periods = [];
+    const currentDate = new Date();
+
+    for (let i = 5; i >= -6; i--) {
+      const baseDate = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth() - Math.floor(i / 2),
+        1
+      );
+
+      if (i % 2 === 0 || i === 5) {
+        const start = new Date(baseDate.getFullYear(), baseDate.getMonth(), 1);
+        const end = new Date(baseDate.getFullYear(), baseDate.getMonth(), 14);
+        periods.push({
+          id: `${baseDate.getFullYear()}-${(
+            baseDate.getMonth() + 1
+          )
+            .toString()
+            .padStart(2, "0")}-1`,
+          start,
+          end,
+          label: `${start.toLocaleDateString("en-US", {
+            month: "short",
+          })} 1-14, ${start.getFullYear()}`,
+        });
+      }
+
+      if (i % 2 !== 0 || i === 5) {
+        const start = new Date(baseDate.getFullYear(), baseDate.getMonth(), 15);
+        const end = new Date(baseDate.getFullYear(), baseDate.getMonth() + 1, 0);
+        periods.push({
+          id: `${baseDate.getFullYear()}-${(
+            baseDate.getMonth() + 1
+          )
+            .toString()
+            .padStart(2, "0")}-15`,
+          start,
+          end,
+          label: `${start.toLocaleDateString("en-US", {
+            month: "short",
+          })} 15-${end.getDate()}, ${start.getFullYear()}`,
+        });
+      }
+    }
+    return periods.sort((a, b) => a.start - b.start);
+  };
+
+  const payPeriods = generatePayPeriods();
+
+  const currentPayPeriodId = selectedPayPeriod;
+  const currentIndex = payPeriods.findIndex((p) => p.id === currentPayPeriodId);
+  const activePeriod = payPeriods[currentIndex];
+
+  const goPrevious = () => {
+    if (currentIndex > 0) setSelectedPayPeriod(payPeriods[currentIndex - 1].id);
+  };
+
+  const goNext = () => {
+    if (currentIndex < payPeriods.length - 1)
+      setSelectedPayPeriod(payPeriods[currentIndex + 1].id);
+  };
+
+  // --- Payroll Calculation Logic ---
+  const getShiftType = (date, clockInTime, clockOutTime) => {
+    const shiftDate = new Date(date);
+    const dayOfWeek = shiftDate.getDay();
+    const isPublicHoliday = false;
+
+    if (isPublicHoliday) return "publicHoliday";
+    if (dayOfWeek === 0) return "sunday";
+    if (dayOfWeek === 6) return "saturday";
+
+    const clockIn = new Date(clockInTime);
+    const clockOut = new Date(clockOutTime);
+    const tenPM = new Date(clockIn);
+    tenPM.setHours(22, 0, 0, 0);
+
+    if (clockOut > tenPM) return "weekdayAfter10pm";
+    return "weekday";
+  };
+
+  const calculateStaffPayroll = (staffMember, payPeriod) => {
+    const startDate = payPeriod.start.toISOString().split("T")[0];
+    const endDate = payPeriod.end.toISOString().split("T")[0];
+    const staffClockEntries = clockEntries.filter(
+      (entry) =>
+        entry.staff_id === staffMember.id &&
+        entry.date >= startDate &&
+        entry.date <= endDate &&
+        entry.clock_in_time &&
+        entry.clock_out_time
+    );
+
+    let totalHours = 0;
+    let totalBreakMinutes = 0;
+    let shiftsWorked = 0;
+
+    const basePay = staffMember.base_pay;
+    const rates = {
+      weekday: basePay,
+      weekdayAfter10pm: basePay * 1.2,
+      saturday: basePay * 1.4,
+      sunday: basePay * 1.6,
+      publicHoliday: basePay * 2.0,
+    };
+
+    const hoursBreakdown = { weekday: 0, weekdayAfter10pm: 0, saturday: 0, sunday: 0, publicHoliday: 0 };
+    let totalGrossPay = 0;
+
+    staffClockEntries.forEach((entry) => {
+      const clockIn = new Date(entry.clock_in_time);
+      const clockOut = new Date(entry.clock_out_time);
+      const hoursWorked = (clockOut - clockIn) / (1000 * 60 * 60);
+      const breakHours = (entry.total_break_duration_minutes || 0) / 60;
+      const payableHours = Math.max(0, hoursWorked - breakHours);
+
+      const shiftType = getShiftType(entry.date, entry.clock_in_time, entry.clock_out_time);
+      hoursBreakdown[shiftType] += payableHours;
+
+      const hourlyRate = rates[shiftType];
+      totalGrossPay += payableHours * hourlyRate;
+
+      totalHours += hoursWorked;
+      totalBreakMinutes += entry.total_break_duration_minutes || 0;
+      shiftsWorked++;
+    });
+
+    const breakHours = totalBreakMinutes / 60;
+    const totalPayableHours = Math.max(0, totalHours - breakHours);
+
+    return {
+      totalHours: totalHours.toFixed(2),
+      breakHours: breakHours.toFixed(2),
+      payableHours: totalPayableHours.toFixed(2),
+      hoursBreakdown: {
+        weekday: hoursBreakdown.weekday.toFixed(2),
+        weekdayAfter10pm: hoursBreakdown.weekdayAfter10pm.toFixed(2),
+        saturday: hoursBreakdown.saturday.toFixed(2),
+        sunday: hoursBreakdown.sunday.toFixed(2),
+        publicHoliday: hoursBreakdown.publicHoliday.toFixed(2),
+      },
+      rates,
+      basePay,
+      grossPay: totalGrossPay.toFixed(2),
+      shiftsScheduled: shifts.filter((shift) => shift.staff_id === staffMember.id).length,
+      shiftsWorked,
+    };
+  };
+
+  const payPeriod = activePeriod;
+  const payrollData = staff.map((staffMember) => ({
+    ...staffMember,
+    payroll: calculateStaffPayroll(staffMember, payPeriod),
+  }));
+
+  const totals = payrollData.reduce(
+    (acc, staff) => ({
+      totalGross: acc.totalGross + parseFloat(staff.payroll.grossPay),
+      totalHours: acc.totalHours + parseFloat(staff.payroll.payableHours),
+      employeeCount: acc.employeeCount + (staff.payroll.shiftsWorked > 0 ? 1 : 0),
+    }),
+    { totalGross: 0, totalHours: 0, employeeCount: 0 }
+  );
+
+  return (
+    <div className="p-6 bg-gray-50 min-h-screen">
+      <div className="max-w-7xl mx-auto">
+        <div className="mb-8">
+          <div className="flex justify-between items-start mb-6">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">Payment Breakdown</h1>
+              <p className="text-gray-600">Review payroll calculations for staff members</p>
+            </div>
+          </div>
+
+          {/* Pay Period Info Box */}
+{/* Pay Period Info Box with Navigation */}
+<div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-6 text-white mb-8">
+  <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+    <div>
+      <h3 className="text-lg font-semibold mb-2">Pay Period</h3>
+<div className="flex items-center space-x-2">
+  <button
+    onClick={goPrevious}
+    disabled={currentIndex === 0}
+    className="p-1 rounded-full bg-white/20 hover:bg-white/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+  >
+    <ChevronLeft className="w-5 h-5 text-white" />
+  </button>
+  <p className="text-white text-xl font-bold">
+    {activePeriod.label}
+  </p>
+  <button
+    onClick={goNext}
+    disabled={currentIndex === payPeriods.length - 1}
+    className="p-1 rounded-full bg-white/20 hover:bg-white/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+  >
+    <ChevronRight className="w-5 h-5 text-white" />
+  </button>
+</div>
+
+      {/* Current Period Indicator */}
+      {(() => {
+        const today = new Date();
+        const currentPeriodId = getCurrentPayPeriodId();
+        const isCurrentPeriod = selectedPayPeriod === currentPeriodId;
+        
+        return !isCurrentPeriod && (
+          <button
+            onClick={() => setSelectedPayPeriod(currentPeriodId)}
+            className="mt-2 px-3 py-1 bg-white/20 hover:bg-white/30 rounded-full text-xs font-medium transition-colors"
+          >
+            Go to Current Period
+          </button>
+        );
+      })()}
+    </div>
+
+
+              <div>
+                <h3 className="text-lg font-semibold mb-2">Total Hours</h3>
+                <p className="text-2xl font-bold">{totals.totalHours.toFixed(2)}h</p>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold mb-2">Gross Payroll</h3>
+                <p className="text-2xl font-bold">${totals.totalGross.toLocaleString()}</p>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold mb-2">Number of Employees</h3>
+                <p className="text-2xl font-bold">{totals.employeeCount}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Staff Payroll Table */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="p-6 border-b border-gray-200">
+            <h2 className="text-xl font-semibold">Staff Payroll Details</h2>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full">
+  <thead className="bg-gray-50">
+    <tr>
+      <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Staff Member</th>
+      {/* Removed Shifts column */}
+      <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">Weekday Hours</th>
+      <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">After 10pm Hours</th>
+      <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">Saturday Hours</th>
+      <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">Sunday Hours</th>
+      <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">Holiday Hours</th>
+      <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">Total Hours</th>
+      <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">Gross Pay</th>
+    </tr>
+  </thead>
+  <tbody className="divide-y divide-gray-200">
+    {payrollData.map((staffMember) => (
+      <tr key={staffMember.id} className="hover:bg-gray-50">
+        <td className="px-6 py-4">
+          <div className="flex items-center">
+            <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-semibold mr-3">
+              {staffMember.avatar}
+            </div>
+            <div>
+              <div className="font-medium text-gray-900">{staffMember.name}</div>
+              <div className="text-sm text-gray-500 capitalize">{staffMember.role}</div>
+            </div>
+          </div>
+        </td>
+
+        {/* Removed Shifts column */}
+
+        <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.weekday}h</td>
+        <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.weekdayAfter10pm}h</td>
+        <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.saturday}h</td>
+        <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.sunday}h</td>
+        <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.publicHoliday}h</td>
+
+        {/* Moved Total Hours here */}
+        <td className="px-6 py-4 text-center">
+          <div className="text-sm">
+            <div className="font-medium text-gray-900">{staffMember.payroll.payableHours}h</div>
+            <div className="text-gray-500">{staffMember.payroll.breakHours}h breaks</div>
+          </div>
+        </td>
+
+        <td className="px-6 py-4 text-center font-semibold">${staffMember.payroll.grossPay}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
   const [showAddStaff, setShowAddStaff] = useState(false);
 
   const AddStaffModal = ({ isOpen, onClose, onAdd }) => {
@@ -1481,17 +1891,30 @@ const handleClockInOut = async (shiftId, action) => {
               
               <div className="flex space-x-4">
                 {isAdmin() && (
-                  <button
-                    onClick={() => setCurrentView('admin')}
-                    className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2 ${
-                      currentView === 'admin' 
-                        ? 'bg-blue-100 text-blue-700' 
-                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                    }`}
-                  >
-                    <Settings className="w-4 h-4" />
-                    <span>Admin</span>
-                  </button>
+                  <>
+                    <button
+                      onClick={() => setCurrentView('admin')}
+                      className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2 ${
+                        currentView === 'admin' 
+                          ? 'bg-blue-100 text-blue-700' 
+                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                      }`}
+                    >
+                      <Settings className="w-4 h-4" />
+                      <span>Admin</span>
+                    </button>
+                    <button
+                      onClick={() => setCurrentView('payment')}
+                      className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2 ${
+                        currentView === 'payment' 
+                          ? 'bg-blue-100 text-blue-700' 
+                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                      }`}
+                    >
+                      <Users className="w-4 h-4" />
+                      <span>Payment Breakdown</span>
+                    </button>
+                  </>
                 )}
                 <button
                   onClick={() => setCurrentView('staff')}
@@ -1540,7 +1963,20 @@ const handleClockInOut = async (shiftId, action) => {
         </div>
       </nav>
 
-      {currentView === 'admin' && isAdmin() ? <AdminView /> : <StaffView />}
+      {currentView === "admin" && isAdmin() ? (
+        <AdminView />
+      ) : currentView === "payment" && isAdmin() ? (
+        <PaymentView
+          staff={staff}
+          shifts={shifts}
+          clockEntries={clockEntries}
+          selectedPayPeriod={selectedPayPeriod}
+          setSelectedPayPeriod={setSelectedPayPeriod}
+        />
+      ) : (
+        <StaffView />
+      )}
+
 
       <DurationPopup />
 
