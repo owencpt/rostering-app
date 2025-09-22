@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar, Clock } from 'lucide-react';
+import { useRoster } from '../context/RosterContext';
+import { useAuth } from '../context/AuthContext';
+
 
 // Mock data - will come from context later
-const mockStaff = { id: 1, name: 'John Doe', role: 'admin', avatar: 'JD' };
-const mockShifts = [
-  { id: 1, staffId: 1, date: '2025-01-15', startTime: '09:00', endTime: '17:00', role: 'manager' },
-  { id: 2, staffId: 1, date: '2025-01-16', startTime: '10:00', endTime: '18:00', role: 'server' }
-];
+// const mockStaff = { id: 1, name: 'John Doe', role: 'admin', avatar: 'JD' };
+// const shifts = [
+//   { id: 1, staffId: 1, date: '2025-01-15', startTime: '09:00', endTime: '17:00', role: 'manager' },
+//   { id: 2, staffId: 1, date: '2025-01-16', startTime: '10:00', endTime: '18:00', role: 'server' }
+// ];
 
 const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -31,11 +34,13 @@ const getWeekDates = (weekStart) => {
 
 const StaffPage = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [currentWeekStart, setCurrentWeekStart] = useState(getWeekStart(new Date()));
+
+    // Get data from contexts
+  const { shifts, currentWeekStart, getWeekDates, formatDate } = useRoster();
+  const { currentStaffMember } = useAuth();
   
   const today = formatDate(new Date());
-  const currentStaffMember = mockStaff;
-  const userShifts = mockShifts.filter(shift => shift.staffId === currentStaffMember.id);
+  const userShifts = shifts.filter(shift => shift.staffId === currentStaffMember.id);
   const todayShifts = userShifts.filter(shift => shift.date === today);
 
   useEffect(() => {
@@ -47,6 +52,17 @@ const StaffPage = () => {
     console.log(`Clock ${action} for shift ${shiftId}`);
     // This will be implemented with context later
   };
+
+  if (!currentStaffMember) {
+    return (
+      <div className="p-6 bg-gray-50 min-h-screen flex items-center justify-center">
+        <div className="text-center text-gray-600">
+          <div className="mb-4">Loading staff information...</div>
+          <div className="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto"></div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
