@@ -1,17 +1,8 @@
 import React, { useState } from 'react';
 import { Calendar, Users, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { useRoster } from '../context/RosterContext';
+import { useAuth } from '../context/AuthContext';
 
-// Mock data - will come from context later
-const mockStaff = [
-  { id: 1, name: 'John Doe', role: 'admin', avatar: 'JD' },
-  { id: 2, name: 'Jane Smith', role: 'server', avatar: 'JS' },
-  { id: 3, name: 'Mike Johnson', role: 'chef', avatar: 'MJ' }
-];
-
-const mockShifts = [
-  { id: 1, staffId: 2, date: '2025-01-15', startTime: '09:00', endTime: '17:00', role: 'server' },
-  { id: 2, staffId: 3, date: '2025-01-15', startTime: '10:00', endTime: '18:00', role: 'chef' }
-];
 
 const timeSlots = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`);
 const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -36,9 +27,21 @@ const getWeekDates = (weekStart) => {
 };
 
 const AdminPage = () => {
-  const [currentWeekStart, setCurrentWeekStart] = useState(getWeekStart(new Date()));
-  const [serviceView, setServiceView] = useState('lunch');
-  const [draggedStaff, setDraggedStaff] = useState(null);
+  const { currentUser } = useAuth();
+  const {
+    staff,
+    currentWeekStart,
+    serviceView,
+    handleDragStart,
+    handleDragOver,
+    handleDrop,
+    getShiftsForTimeSlot,
+    navigateWeek,
+    goToCurrentWeek,
+    setServiceView,
+    removeStaffFromSlot
+  } = useRoster();
+
 
   const slotRanges = {
     lunch: [9, 14],
@@ -47,62 +50,68 @@ const AdminPage = () => {
 
   const [start, end] = slotRanges[serviceView];
 
-  const navigateWeek = (direction) => {
-    const newWeekStart = new Date(currentWeekStart);
-    newWeekStart.setDate(newWeekStart.getDate() + (direction * 7));
-    setCurrentWeekStart(newWeekStart);
-  };
-
-  const goToCurrentWeek = () => {
-    setCurrentWeekStart(getWeekStart(new Date()));
-  };
-
-  const handleDragStart = (e, staffMember) => {
-    setDraggedStaff(staffMember);
-    e.dataTransfer.effectAllowed = 'move';
-  };
-
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  };
-
-  const handleDrop = (e, dayIndex, timeSlot) => {
-    e.preventDefault();
-    console.log('Dropped', draggedStaff?.name, 'on', weekDays[dayIndex], 'at', timeSlot);
-    // This will be implemented with context later
-    setDraggedStaff(null);
-  };
-
-  const getShiftsForTimeSlot = (dayIndex, timeSlot) => {
-    const weekDates = getWeekDates(currentWeekStart);
-    const dateString = formatDate(weekDates[dayIndex]);
-    
-    const parseTime = (timeStr) => {
-      const [hours, minutes] = timeStr.split(':').map(Number);
-      return hours + minutes / 60;
-    };
-    
-    const currentSlot = parseTime(timeSlot);
-    const nextSlot = currentSlot + 1;
-    
-    const shiftsInSlot = mockShifts.filter(shift => {
-      const shiftStart = parseTime(shift.startTime);
-      const shiftEnd = parseTime(shift.endTime);
-      
-      return shift.date === dateString && 
-             currentSlot >= shiftStart && 
-             currentSlot < shiftEnd;
-    });
-
-    return { fullHourShifts: shiftsInSlot, partialShifts: [], dateString };
-  };
-
   const weekDates = getWeekDates(currentWeekStart);
   const today = new Date();
   const isCurrentWeek = weekDates.some(date => 
     date.toDateString() === today.toDateString()
   );
+
+  // const navigateWeek = (direction) => {
+  //   const newWeekStart = new Date(currentWeekStart);
+  //   newWeekStart.setDate(newWeekStart.getDate() + (direction * 7));
+  //   setCurrentWeekStart(newWeekStart);
+  // };
+
+  // const goToCurrentWeek = () => {
+  //   setCurrentWeekStart(getWeekStart(new Date()));
+  // };
+
+  // const handleDragStart = (e, staffMember) => {
+  //   setDraggedStaff(staffMember);
+  //   e.dataTransfer.effectAllowed = 'move';
+  // };
+
+  // const handleDragOver = (e) => {
+  //   e.preventDefault();
+  //   e.dataTransfer.dropEffect = 'move';
+  // };
+
+  // const handleDrop = (e, dayIndex, timeSlot) => {
+  //   e.preventDefault();
+  //   console.log('Dropped', draggedStaff?.name, 'on', weekDays[dayIndex], 'at', timeSlot);
+  //   // This will be implemented with context later
+  //   setDraggedStaff(null);
+  // };
+
+  // const getShiftsForTimeSlot = (dayIndex, timeSlot) => {
+  //   const weekDates = getWeekDates(currentWeekStart);
+  //   const dateString = formatDate(weekDates[dayIndex]);
+    
+  //   const parseTime = (timeStr) => {
+  //     const [hours, minutes] = timeStr.split(':').map(Number);
+  //     return hours + minutes / 60;
+  //   };
+    
+  //   const currentSlot = parseTime(timeSlot);
+  //   const nextSlot = currentSlot + 1;
+    
+  //   const shiftsInSlot = mockShifts.filter(shift => {
+  //     const shiftStart = parseTime(shift.startTime);
+  //     const shiftEnd = parseTime(shift.endTime);
+      
+  //     return shift.date === dateString && 
+  //            currentSlot >= shiftStart && 
+  //            currentSlot < shiftEnd;
+  //   });
+
+  //   return { fullHourShifts: shiftsInSlot, partialShifts: [], dateString };
+  // };
+
+  // const weekDates = getWeekDates(currentWeekStart);
+  // const today = new Date();
+  // const isCurrentWeek = weekDates.some(date => 
+  //   date.toDateString() === today.toDateString()
+  // );
 
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
@@ -138,7 +147,7 @@ const AdminPage = () => {
                 Staff Members
               </h2>
               <div className="space-y-3">
-                {mockStaff.map(member => (
+                {staff.map(member => (
                   <div
                     key={member.id}
                     draggable
@@ -272,7 +281,7 @@ const AdminPage = () => {
                               <div className="absolute top-1 left-1 right-1 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-md p-2 text-white text-xs">
                                 <div className="space-y-1">
                                   {fullHourShifts.map((shift) => {
-                                    const staffMember = mockStaff.find(s => s.id === shift.staffId);
+                                    const staffMember = staff.find(s => s.id === shift.staffId);
                                     return (
                                       <div key={shift.id} className="flex items-center justify-between">
                                         <span className="font-semibold">{staffMember?.name}</span>

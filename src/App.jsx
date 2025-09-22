@@ -5,6 +5,16 @@ import { PaymentProvider } from './context/PaymentContext';
 import { TimerProvider } from './context/TimerContext';
 import MainApp from './components/MainApp';
 
+const AppContent = () => {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <div>Loading...</div>;
+  }
+
+  return user ? <MainApp /> : <LoginPage />;
+};
+
 const App = () => {
   return (
     <AuthProvider>
