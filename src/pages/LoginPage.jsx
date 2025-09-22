@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import { Calendar, Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
-const LoginPage = ({ onLogin }) => {
+
+const LoginPage = () => {
+  const { handleAuth: authHandler } = useAuth(); // Add this line
   const [authMode, setAuthMode] = useState('login');
   const [authData, setAuthData] = useState({
     email: '',
@@ -13,27 +16,16 @@ const LoginPage = ({ onLogin }) => {
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
 
+  // Replace the existing handleAuth function with this:
   const handleAuth = async (e) => {
     e.preventDefault();
     setAuthError('');
     setAuthLoading(true);
 
-    // Mock authentication - replace with actual auth logic later
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
-      
-      if (authData.email && authData.password) {
-        // Mock successful login
-        const mockUser = {
-          id: 1,
-          name: authData.name || 'John Doe',
-          role: authData.role || 'admin',
-          avatar: (authData.name || 'John Doe').split(' ').map(n => n[0]).join('').toUpperCase(),
-          email: authData.email
-        };
-        onLogin(mockUser);
-      } else {
-        throw new Error('Please fill in all fields');
+      const result = await authHandler(authData, authMode);
+      if (!result.success) {
+        throw new Error(result.error || 'Authentication failed');
       }
     } catch (error) {
       setAuthError(error.message);
