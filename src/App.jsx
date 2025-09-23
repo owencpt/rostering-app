@@ -15,19 +15,19 @@ const AppContent = () => {
   return user ? <MainApp /> : <LoginPage />;
 };
 
-const App = () => {
+function App() {
   return (
     <AuthProvider>
-      <RosterProvider>
-        <PaymentProvider>
-          <TimerProvider>
+      <TimerProvider>
+        <RosterProvider>
+          <PaymentProvider>
             <MainApp />
-          </TimerProvider>
-        </PaymentProvider>
-      </RosterProvider>
+          </PaymentProvider>
+        </RosterProvider>
+      </TimerProvider>
     </AuthProvider>
   );
-};
+}
 
 export default App;
 

@@ -311,8 +311,8 @@ export const shiftsService = {
 
 // Add this to your supabaseClient.js file
 export const clockService = {
+  // ...existing code...
 
-  
   async clockIn(staffId, shiftId = null) {
     const now = new Date();
     const date = now.toISOString().split('T')[0];
@@ -373,7 +373,14 @@ export const clockService = {
     
     const { data, error } = await supabase
       .from('clock_entries')
-      .select('*')
+      .select(`
+        *,
+        shift:shift_id (
+          id,
+          start_time,
+          end_time
+        )
+      `)
       .eq('staff_id', staffId)
       .eq('date', today)
       .is('clock_out_time', null)
@@ -465,6 +472,65 @@ export const clockService = {
 
     if (error) throw error;
     return data;
+  },
+  async modifyClockEntry(entryId, updates) {
+  console.log('Modifying entry:', { entryId, updates }); // Debug log
+  
+  const { data, error } = await supabase
+    .from('clock_entries')
+    .update(updates)
+    .eq('id', entryId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Database error:', error); // Debug log
+    throw error;
+  }
+  
+  return data;
+},
+
+  async startBreak(staffId) {
+    const now = new Date();
+    // Only store the break start in memory via the UI state
+    return {
+      break_start_time: now.toISOString(),
+      is_on_break: true
+    };
+  },
+
+  async endBreak(staffId, breakStartTime) {
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Calculate break duration
+    const breakEndTime = new Date();
+    const breakStartDate = new Date(breakStartTime);
+    const breakDurationMinutes = Math.round((breakEndTime - breakStartDate) / (1000 * 60));
+
+    // Find active clock entry
+    const { data: activeEntry, error: findError } = await supabase
+      .from('clock_entries')
+      .select('*')
+      .eq('staff_id', staffId)
+      .eq('date', today)
+      .is('clock_out_time', null)
+      .single();
+
+    if (findError) throw findError;
+
+    // Update only using total_break_duration_minutes
+    const { data, error } = await supabase
+      .from('clock_entries')
+      .update({
+        total_break_duration_minutes: (activeEntry.total_break_duration_minutes || 0) + breakDurationMinutes
+      })
+      .eq('id', activeEntry.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
   }
 };
 
@@ -476,8 +542,8 @@ export const dataTransformers = {
       id: dbShift.id,
       staffId: dbShift.staff_id,
       date: dbShift.date,
-      startTime: dbShift.start_time.substring(0, 5), // Remove seconds
-      endTime: dbShift.end_time.substring(0, 5), // Remove seconds
+      startTime: dbShift.start_time, // Use time directly from database
+      endTime: dbShift.end_time, // Use time directly from database
       role: dbShift.role,
       staff: dbShift.staff
     }
@@ -512,8 +578,8 @@ export const dataTransformers = {
       id: dbClockEntry.id,
       staffId: dbClockEntry.staff_id,
       shiftId: dbClockEntry.shift_id,
-      clockInTime: dbClockEntry.clock_in_time,
-      clockOutTime: dbClockEntry.clock_out_time,
+      clockInTime: dbClockEntry.clock_in_time, // Use time directly from database
+      clockOutTime: dbClockEntry.clock_out_time, // Use time directly from database
       date: dbClockEntry.date,
       staff: dbClockEntry.staff,
       shift: dbClockEntry.shift

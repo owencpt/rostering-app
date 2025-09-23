@@ -1,8 +1,8 @@
 import React from 'react';
-import { useTimers } from '../hooks/useTimers';
+import { useTimer } from '../context/TimerContext';
 
 const BreakTimer = ({ staffId, isVisible }) => {
-  const { formatBreakTime } = useTimers();
+  const { formatBreakTime } = useTimer();
 
   if (!isVisible) return null;
 

@@ -2,55 +2,123 @@ import React, { useState, useEffect } from 'react';
 import { Calendar, Clock } from 'lucide-react';
 import { useRoster } from '../context/RosterContext';
 import { useAuth } from '../context/AuthContext';
-
-
-// Mock data - will come from context later
-// const mockStaff = { id: 1, name: 'John Doe', role: 'admin', avatar: 'JD' };
-// const shifts = [
-//   { id: 1, staffId: 1, date: '2025-01-15', startTime: '09:00', endTime: '17:00', role: 'manager' },
-//   { id: 2, staffId: 1, date: '2025-01-16', startTime: '10:00', endTime: '18:00', role: 'server' }
-// ];
+import { clockService } from '../lib/supabaseClient';
+import ClockInOut from '../components/ClockInOut';
+import { useTimer } from '../context/TimerContext'; // Import useTimer
 
 const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-const getWeekStart = (date) => {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  return new Date(d.setDate(diff));
-};
-
-const formatDate = (date) => {
-  return date.toISOString().split('T')[0];
-};
-
-const getWeekDates = (weekStart) => {
-  return Array.from({ length: 7 }, (_, i) => {
-    const date = new Date(weekStart);
-    date.setDate(date.getDate() + i);
-    return date;
-  });
-};
-
 const StaffPage = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [clockStatus, setClockStatus] = useState({});
 
-    // Get data from contexts
+  // Get data from contexts
   const { shifts, currentWeekStart, getWeekDates, formatDate } = useRoster();
   const { currentStaffMember } = useAuth();
-  
+  const { handleClockInOut } = useTimer(); // Get handleClockInOut from context
+
+  // Move these calculations before the useEffect
   const today = formatDate(new Date());
-  const userShifts = shifts.filter(shift => shift.staffId === currentStaffMember.id);
+  const userShifts = shifts.filter(shift => shift.staffId === currentStaffMember?.id);
   const todayShifts = userShifts.filter(shift => shift.date === today);
 
+  const handleModifyShift = async (shiftId, updates) => {
+  try {
+    const { clockInTime, clockOutTime, breakDuration } = updates;
+    const date = formatDate(new Date());
+    
+    // Use clockStatus directly since we already have it
+    const clockEntry = clockStatus[shiftId];
+    
+    if (!clockEntry) {
+      console.error('No clock entry found for this shift');
+      return;
+    }
+
+    // Now update using the clock entry ID
+    await clockService.modifyClockEntry(clockEntry.id, {
+      clock_in_time: `${date}T${clockInTime}:00`,
+      clock_out_time: `${date}T${clockOutTime}:00`,
+      total_break_duration_minutes: breakDuration
+    });
+    
+    // Refresh clock status
+    const updatedStatus = await clockService.getTodayStatusComplete(currentStaffMember.id);
+    setClockStatus(prev => ({
+      ...prev,
+      [shiftId]: updatedStatus
+    }));
+
+    // Add success feedback
+    console.log('Successfully updated shift times');
+  } catch (error) {
+    console.error('Error modifying shift:', error);
+    // Add error handling here
+  }
+};
+
+  // Load initial clock status
+  useEffect(() => {
+    const loadClockStatus = async () => {
+      if (!currentStaffMember) return;
+      
+      try {
+        // Get all clock entries for today's shifts
+        const todayEntries = await Promise.all(
+          todayShifts.map(async (shift) => {
+            const status = await clockService.getShiftStatus(currentStaffMember.id, shift.id);
+            return {
+              shiftId: shift.id,
+              status
+            };
+          })
+        );
+
+        // Update clock status for all shifts
+        const newClockStatus = {};
+        todayEntries.forEach(({shiftId, status}) => {
+          if (status) {
+            newClockStatus[shiftId] = {
+              ...status,
+              isClockedIn: !!status.clock_in_time && !status.clock_out_time,
+              canModifyShift: !!(status.clock_in_time && status.clock_out_time)
+            };
+          }
+        });
+
+        setClockStatus(newClockStatus);
+      } catch (error) {
+        console.error('Error loading clock status:', error);
+      }
+    };
+
+    loadClockStatus();
+  }, [currentStaffMember, todayShifts]); // Now todayShifts is defined
+
+  // Update current time
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  const handleClockAction = (shiftId, action) => {
-    console.log(`Clock ${action} for shift ${shiftId}`);
-    // This will be implemented with context later
+  // Handle clock actions
+  const handleClockAction = async (shiftId, action) => {
+    if (!currentStaffMember) return;
+
+    try {
+      const result = await handleClockInOut(shiftId, action, shifts);
+      
+      // Only update local state if needed
+      if (result?.shouldReloadStatus) {
+        const updatedStatus = await clockService.getTodayStatusComplete(currentStaffMember.id);
+        setClockStatus(prev => ({
+          ...prev,
+          [shiftId]: updatedStatus
+        }));
+      }
+    } catch (error) {
+      console.error('Clock action error:', error);
+    }
   };
 
   if (!currentStaffMember) {
@@ -97,27 +165,14 @@ const StaffPage = () => {
           {todayShifts.length > 0 ? (
             <div className="space-y-4">
               {todayShifts.map(shift => (
-                <div key={shift.id} className="p-4 rounded-lg border-2 border-blue-200 bg-blue-50">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="font-semibold text-gray-900">{currentStaffMember.name}</h3>
-                      <p className="text-gray-600">{shift.role}</p>
-                      <p className="text-sm text-gray-500">{shift.startTime} - {shift.endTime}</p>
-                    </div>
-                    
-                    <div className="flex items-center space-x-3">
-                      <div className="text-right">
-                        <p className="text-sm text-gray-600">Ready to clock in</p>
-                      </div>
-                      <button
-                        onClick={() => handleClockAction(shift.id, 'in')}
-                        className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-green-600 hover:bg-green-700 text-white"
-                      >
-                        <span>Clock In</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                <ClockInOut
+                  key={shift.id}
+                  shift={shift}
+                  currentStaffMember={currentStaffMember}
+                  clockStatus={clockStatus}
+                  onClockAction={handleClockAction}
+                  onModifyShift={handleModifyShift} // We'll implement this later
+                />
               ))}
             </div>
           ) : (
@@ -139,14 +194,23 @@ const StaffPage = () => {
               const weekDates = getWeekDates(currentWeekStart);
               const dayDate = weekDates[index];
               const dateString = formatDate(dayDate);
+              
+              // Change the isToday check to use the same format as shift dates
+              const today = formatDate(new Date());
+              const isToday = dateString === today;
+              
               const dayShifts = userShifts.filter(shift => shift.date === dateString);
-              const isToday = dayDate.toDateString() === new Date().toDateString();
               
               return (
                 <div key={day} className={`border border-gray-200 rounded-lg p-3 ${isToday ? 'border-blue-300 bg-blue-50' : ''}`}>
                   <h3 className={`font-medium text-center mb-2 ${isToday ? 'text-blue-900' : 'text-gray-900'}`}>{day}</h3>
                   <div className={`text-center text-sm mb-2 ${isToday ? 'text-blue-700' : 'text-gray-600'}`}>
-                    {dayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    {/* Use the same date object for display */}
+                    {dayDate.toLocaleDateString('en-US', { 
+                      month: 'short', 
+                      day: 'numeric',
+                      year: 'numeric' // Add year to ensure correct date
+                    })}
                     {isToday && <div className="text-xs font-medium text-blue-600">Today</div>}
                   </div>
                   <div className="space-y-2">

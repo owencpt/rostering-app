@@ -1,7 +1,8 @@
-import React from 'react';
-import { Play, Square, Settings } from 'lucide-react';
-import { useTimers } from '../hooks/useTimers';
+import React, { useState } from 'react';
+import { Play, Square, Settings, Coffee, LogOut } from 'lucide-react';
+import { useTimer } from '../context/TimerContext';
 import BreakTimer from './BreakTimer';
+import ModifyShiftModal from './ModifyShiftModal';
 
 const ClockInOut = ({ 
   shift, 
@@ -10,26 +11,40 @@ const ClockInOut = ({
   onClockAction, 
   onModifyShift 
 }) => {
-  const { breakTimers, formatBreakTime } = useTimers();
+  const { breakTimers, formatBreakTime } = useTimer();
+  const [showModifyModal, setShowModifyModal] = useState(false);
   
   const currentClockStatus = clockStatus[shift.id];
-  const breakData = breakTimers[shift.staffId];
-  
+
+  // Log state changes for debugging
+  console.log('Current Clock Status:', currentClockStatus);
+  console.log('Break Timers:', breakTimers);
+
   // Check if staff is currently clocked into ANY other shift
-  const staffActiveClockedShift = Object.entries(clockStatus).find(([shiftId, status]) => {
+  const staffActiveClockedShift = Object.entries(clockStatus).find(([entryShiftId, status]) => {
     return status && 
            status.staff_id === shift.staffId && 
-           shiftId !== shift.id.toString() &&
+           status.shift_id !== shift.id && // Changed from shiftId comparison
            status.clock_in_time && 
            !status.clock_out_time;
   });
 
   const getActionButtons = () => {
-    // If this shift has been completed (clocked out), always show modify
+    // If staff is clocked into another shift, disable actions
+    if (staffActiveClockedShift) {
+      return (
+        <button disabled className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 bg-gray-100 text-gray-500">
+          <Square className="w-4 h-4" />
+          <span>Clocked into another shift</span>
+        </button>
+      );
+    }
+
+    // If this shift has been completed, show modify
     if (currentClockStatus?.canModifyShift) {
       return (
         <button
-          onClick={() => onModifyShift(shift.id)}
+          onClick={() => setShowModifyModal(true)}
           className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-blue-600 hover:bg-blue-700 text-white"
         >
           <Settings className="w-4 h-4" />
@@ -37,21 +52,33 @@ const ClockInOut = ({
         </button>
       );
     }
-    
-    // If staff is clocked into a different shift, show disabled state
-    if (staffActiveClockedShift) {
+
+    // If clocked in but not on break
+    if (currentClockStatus?.isClockedIn && !currentClockStatus?.isOnBreak) {
       return (
-        <div className="px-4 py-2 bg-gray-100 text-gray-500 rounded-lg text-sm">
-          Cannot clock in - Currently clocked into another shift
+        <div className="flex space-x-2">
+          <button
+            onClick={() => onClockAction(shift.id, 'start_break')}
+            className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-orange-600 hover:bg-orange-700 text-white"
+          >
+            <Coffee className="w-4 h-4" />
+            <span>Start Break</span>
+          </button>
+          <button
+            onClick={() => onClockAction(shift.id, 'out')}
+            className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-red-600 hover:bg-red-700 text-white"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Clock Out</span>
+          </button>
         </div>
       );
     }
-    
-    // If currently clocked into THIS shift
-    if (currentClockStatus?.isClockedIn && !currentClockStatus?.canModifyShift) {
-      if (breakData?.isOnBreak) {
-        // On break - show end break only
-        return (
+
+    // If on break
+    if (currentClockStatus?.isOnBreak) {
+      return (
+        <div className="flex space-x-2">
           <button
             onClick={() => onClockAction(shift.id, 'end_break')}
             className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-orange-600 hover:bg-orange-700 text-white"
@@ -59,31 +86,18 @@ const ClockInOut = ({
             <Play className="w-4 h-4" />
             <span>End Break</span>
           </button>
-        );
-      } else {
-        // Clocked in, not on break - show start break and clock out
-        return (
-          <div className="flex space-x-2">
-            <button
-              onClick={() => onClockAction(shift.id, 'start_break')}
-              className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-yellow-600 hover:bg-yellow-700 text-white"
-            >
-              <Square className="w-4 h-4" />
-              <span>Start Break</span>
-            </button>
-            <button
-              onClick={() => onClockAction(shift.id, 'out')}
-              className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-red-600 hover:bg-red-700 text-white"
-            >
-              <Square className="w-4 h-4" />
-              <span>Clock Out</span>
-            </button>
-          </div>
-        );
-      }
+          <button
+            onClick={() => onClockAction(shift.id, 'out')}
+            className="px-4 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors bg-red-600 hover:bg-red-700 text-white"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Clock Out</span>
+          </button>
+        </div>
+      );
     }
-    
-    // Default: not clocked in yet and no other active shifts
+
+    // Default: Show clock in button
     return (
       <button
         onClick={() => onClockAction(shift.id, 'in')}
@@ -94,7 +108,6 @@ const ClockInOut = ({
       </button>
     );
   };
-
   const getStatusMessage = () => {
     if (!currentClockStatus) {
       return 'Not clocked in';
@@ -113,7 +126,7 @@ const ClockInOut = ({
       return message;
     }
     
-    if (breakData?.isOnBreak) {
+    if (currentClockStatus.isOnBreak) {
       return 'Currently on break';
     }
     
@@ -156,6 +169,19 @@ const ClockInOut = ({
           {getActionButtons()}
         </div>
       </div>
+
+      <ModifyShiftModal
+        isOpen={showModifyModal}
+        onClose={() => setShowModifyModal(false)}
+        shift={shift}
+        clockEntry={currentClockStatus}
+        onSave={(updates) => {
+          onModifyShift(shift.id, updates);
+          setShowModifyModal(false);
+        }}
+      />
+
+
     </div>
   );
 };
