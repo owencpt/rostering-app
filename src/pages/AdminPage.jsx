@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { Calendar, Users, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useRoster } from '../context/RosterContext';
 import { useAuth } from '../context/AuthContext';
-
+import { shiftsService, dataTransformers } from '../lib/supabaseClient'; // Import Supabase services
+import DurationModal from '../components/DurationModal'; // Import the modal component
 
 const timeSlots = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`);
 const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -34,14 +35,18 @@ const AdminPage = () => {
     serviceView,
     handleDragStart,
     handleDragOver,
-    handleDrop,
     getShiftsForTimeSlot,
     navigateWeek,
     goToCurrentWeek,
     setServiceView,
-    removeStaffFromSlot
+    removeStaffFromSlot,
+    addShift // Assuming you have this function in your context
   } = useRoster();
 
+  // Modal state
+  const [showDurationModal, setShowDurationModal] = useState(false);
+  const [pendingShift, setPendingShift] = useState(null);
+  const [draggedStaff, setDraggedStaff] = useState(null);
 
   const slotRanges = {
     lunch: [9, 14],
@@ -56,62 +61,108 @@ const AdminPage = () => {
     date.toDateString() === today.toDateString()
   );
 
-  // const navigateWeek = (direction) => {
-  //   const newWeekStart = new Date(currentWeekStart);
-  //   newWeekStart.setDate(newWeekStart.getDate() + (direction * 7));
-  //   setCurrentWeekStart(newWeekStart);
-  // };
+  // Enhanced drag handlers
+  const handleDragStartLocal = (e, staffMember) => {
+    setDraggedStaff(staffMember);
+    handleDragStart(e, staffMember);
+  };
 
-  // const goToCurrentWeek = () => {
-  //   setCurrentWeekStart(getWeekStart(new Date()));
-  // };
-
-  // const handleDragStart = (e, staffMember) => {
-  //   setDraggedStaff(staffMember);
-  //   e.dataTransfer.effectAllowed = 'move';
-  // };
-
-  // const handleDragOver = (e) => {
-  //   e.preventDefault();
-  //   e.dataTransfer.dropEffect = 'move';
-  // };
-
-  // const handleDrop = (e, dayIndex, timeSlot) => {
-  //   e.preventDefault();
-  //   console.log('Dropped', draggedStaff?.name, 'on', weekDays[dayIndex], 'at', timeSlot);
-  //   // This will be implemented with context later
-  //   setDraggedStaff(null);
-  // };
-
-  // const getShiftsForTimeSlot = (dayIndex, timeSlot) => {
-  //   const weekDates = getWeekDates(currentWeekStart);
-  //   const dateString = formatDate(weekDates[dayIndex]);
+  const handleDropLocal = (e, dayIndex, timeSlot) => {
+    e.preventDefault();
     
-  //   const parseTime = (timeStr) => {
-  //     const [hours, minutes] = timeStr.split(':').map(Number);
-  //     return hours + minutes / 60;
-  //   };
+    if (!draggedStaff) return;
+
+    const weekDates = getWeekDates(currentWeekStart);
+    const dayDate = weekDates[dayIndex];
     
-  //   const currentSlot = parseTime(timeSlot);
-  //   const nextSlot = currentSlot + 1;
-    
-  //   const shiftsInSlot = mockShifts.filter(shift => {
-  //     const shiftStart = parseTime(shift.startTime);
-  //     const shiftEnd = parseTime(shift.endTime);
+    // Create pending shift data
+    const shiftData = {
+      staffId: draggedStaff.id,
+      staffName: draggedStaff.name,
+      role: draggedStaff.role,
+      day: weekDays[dayIndex],
+      date: dayDate.toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric' 
+      }),
+      dateString: formatDate(dayDate),
+      startTime: timeSlot,
+      dayIndex,
+      timeSlot
+    };
+
+    setPendingShift(shiftData);
+    setShowDurationModal(true);
+    setDraggedStaff(null);
+  };
+
+  const handleRemoveShift = async (shiftId) => {
+    try {
+      await shiftsService.deleteShift(shiftId);
       
-  //     return shift.date === dateString && 
-  //            currentSlot >= shiftStart && 
-  //            currentSlot < shiftEnd;
-  //   });
+      // Remove from context if you have a removeShift function
+      if (removeStaffFromSlot) {
+        removeStaffFromSlot(shiftId);
+      }
+      
+      console.log('Shift removed successfully');
+      
+    } catch (error) {
+      console.error('Error removing shift:', error);
+      alert('Failed to remove shift. Please try again.');
+    }
+  };
 
-  //   return { fullHourShifts: shiftsInSlot, partialShifts: [], dateString };
-  // };
+  const handleConfirmShift = async (duration) => {
+    if (!pendingShift) return;
 
-  // const weekDates = getWeekDates(currentWeekStart);
-  // const today = new Date();
-  // const isCurrentWeek = weekDates.some(date => 
-  //   date.toDateString() === today.toDateString()
-  // );
+    try {
+      const startHour = parseInt(pendingShift.startTime);
+      const endTime = startHour + duration;
+      const endHour = Math.floor(endTime);
+      const endMinutes = (endTime % 1) * 60;
+      const endTimeString = `${endHour.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`;
+
+      // Get the staff member to determine their role
+      const staffMember = staff.find(s => s.id === pendingShift.staffId);
+
+      // Create the shift object in database format
+      const shiftData = {
+        staff_id: pendingShift.staffId,
+        date: pendingShift.dateString,
+        start_time: pendingShift.startTime,
+        end_time: endTimeString,
+        role: staffMember?.role || 'staff' // Use staff member's role or default to 'staff'
+      };
+
+      // Save to database using Supabase
+      const newShift = await shiftsService.createShift(shiftData);
+      
+      // Convert to app format and add to context if you have an addShift function
+      const appFormatShift = dataTransformers.shiftToAppFormat(newShift);
+      
+      if (addShift) {
+        addShift(appFormatShift);
+      }
+
+      console.log('Shift created successfully:', newShift);
+      
+      // Show success message (you might want to add a toast notification here)
+      
+    } catch (error) {
+      console.error('Error creating shift:', error);
+      // Show error message (you might want to add error handling UI here)
+      alert('Failed to create shift. Please try again.');
+    }
+
+    setPendingShift(null);
+  };
+
+  const handleCloseModal = () => {
+    setShowDurationModal(false);
+    setPendingShift(null);
+  };
 
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
@@ -151,7 +202,7 @@ const AdminPage = () => {
                   <div
                     key={member.id}
                     draggable
-                    onDragStart={(e) => handleDragStart(e, member)}
+                    onDragStart={(e) => handleDragStartLocal(e, member)}
                     className="p-3 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200 cursor-move hover:shadow-md transition-all duration-200 select-none"
                   >
                     <div className="flex items-center">
@@ -275,7 +326,7 @@ const AdminPage = () => {
                             key={`${day}-${timeSlot}`}
                             className={`relative border-r border-b border-gray-200 hover:bg-blue-50 transition-colors h-20 ${isToday ? 'bg-blue-25' : ''}`}
                             onDragOver={handleDragOver}
-                            onDrop={(e) => handleDrop(e, dayIndex, timeSlot)}
+                            onDrop={(e) => handleDropLocal(e, dayIndex, timeSlot)}
                           >
                             {fullHourShifts.length > 0 && (
                               <div className="absolute top-1 left-1 right-1 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-md p-2 text-white text-xs">
@@ -286,7 +337,7 @@ const AdminPage = () => {
                                       <div key={shift.id} className="flex items-center justify-between">
                                         <span className="font-semibold">{staffMember?.name}</span>
                                         <button
-                                          onClick={() => console.log('Remove shift', shift.id)}
+                                          onClick={() => handleRemoveShift(shift.id)}
                                           className="w-3 h-3 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600 transition-colors flex-shrink-0"
                                           title={`Remove ${staffMember?.name}`}
                                         >
@@ -309,6 +360,14 @@ const AdminPage = () => {
           </div>
         </div>
       </div>
+
+      {/* Duration Modal */}
+      <DurationModal
+        isOpen={showDurationModal}
+        onClose={handleCloseModal}
+        pendingShift={pendingShift}
+        onConfirm={handleConfirmShift}
+      />
     </div>
   );
 };
