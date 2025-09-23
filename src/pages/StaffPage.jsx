@@ -4,7 +4,10 @@ import { useRoster } from '../context/RosterContext';
 import { useAuth } from '../context/AuthContext';
 import { clockService } from '../lib/supabaseClient';
 import ClockInOut from '../components/ClockInOut';
-import { useTimer } from '../context/TimerContext'; // Import useTimer
+import { useTimer } from '../context/TimerContext';
+
+ 
+// import { useTimer } from '../context/TimerContext'; // Import useTimer
 
 const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 

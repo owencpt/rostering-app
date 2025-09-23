@@ -13,8 +13,10 @@ const ClockInOut = ({
 }) => {
   const { breakTimers, formatBreakTime } = useTimer();
   const [showModifyModal, setShowModifyModal] = useState(false);
-  
+
   const currentClockStatus = clockStatus[shift.id];
+  const breakData = breakTimers[shift.staffId];
+  const isOnBreak = breakData?.isOnBreak;
 
   // Log state changes for debugging
   console.log('Current Clock Status:', currentClockStatus);
@@ -24,7 +26,7 @@ const ClockInOut = ({
   const staffActiveClockedShift = Object.entries(clockStatus).find(([entryShiftId, status]) => {
     return status && 
            status.staff_id === shift.staffId && 
-           status.shift_id !== shift.id && // Changed from shiftId comparison
+           status.shift_id !== shift.id &&
            status.clock_in_time && 
            !status.clock_out_time;
   });
@@ -54,7 +56,7 @@ const ClockInOut = ({
     }
 
     // If clocked in but not on break
-    if (currentClockStatus?.isClockedIn && !currentClockStatus?.isOnBreak) {
+    if (currentClockStatus?.isClockedIn && !isOnBreak) {
       return (
         <div className="flex space-x-2">
           <button
@@ -76,7 +78,7 @@ const ClockInOut = ({
     }
 
     // If on break
-    if (currentClockStatus?.isOnBreak) {
+    if (isOnBreak) {
       return (
         <div className="flex space-x-2">
           <button
@@ -108,6 +110,7 @@ const ClockInOut = ({
       </button>
     );
   };
+
   const getStatusMessage = () => {
     if (!currentClockStatus) {
       return 'Not clocked in';
@@ -126,7 +129,7 @@ const ClockInOut = ({
       return message;
     }
     
-    if (currentClockStatus.isOnBreak) {
+    if (isOnBreak) {
       return 'Currently on break';
     }
     
@@ -158,9 +161,7 @@ const ClockInOut = ({
         
         <div className="flex items-center space-x-3">
           <div className="text-right">
-            <p className="text-sm text-gray-600">
-              {getStatusMessage()}
-            </p>
+            <p className="text-sm text-gray-600">{getStatusMessage()}</p>
             <BreakTimer 
               staffId={shift.staffId} 
               isVisible={currentClockStatus?.isClockedIn && !currentClockStatus?.canModifyShift}
@@ -180,8 +181,6 @@ const ClockInOut = ({
           setShowModifyModal(false);
         }}
       />
-
-
     </div>
   );
 };
