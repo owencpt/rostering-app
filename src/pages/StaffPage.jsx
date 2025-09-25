@@ -20,11 +20,75 @@ const StaffPage = () => {
   const { currentStaffMember } = useAuth();
   const { handleClockInOut } = useTimer(); // Get handleClockInOut from context
 
-  // Move these calculations before the useEffect
-  const today = formatDate(new Date());
-  const userShifts = shifts.filter(shift => shift.staffId === currentStaffMember?.id);
-  const todayShifts = userShifts.filter(shift => shift.date === today);
 
+  // Load initial clock status
+  useEffect(() => {
+  const loadClockStatus = async () => {
+    if (!currentStaffMember || !shifts || shifts.length === 0) return;
+    
+    try {
+      const today = formatDate(new Date());
+      const todayShifts = shifts.filter(shift => 
+        shift.staffId === currentStaffMember.id && shift.date === today
+      );
+
+      // Get all clock entries for today's shifts
+      const todayEntries = await Promise.all(
+        todayShifts.map(async (shift) => {
+          const status = await clockService.getShiftStatus(currentStaffMember.id, shift.id);
+          return {
+            shiftId: shift.id,
+            status
+          };
+        })
+      );
+
+      // Update clock status for all shifts
+      const newClockStatus = {};
+      todayEntries.forEach(({shiftId, status}) => {
+        if (status) {
+          newClockStatus[shiftId] = {
+            ...status,
+            isClockedIn: !!status.clock_in_time && !status.clock_out_time,
+            canModifyShift: !!(status.clock_in_time && status.clock_out_time)
+          };
+        }
+      });
+
+      setClockStatus(newClockStatus);
+    } catch (error) {
+      console.error('Error loading clock status:', error);
+    }
+  };
+
+  loadClockStatus();
+}, [currentStaffMember, shifts]); // Now todayShifts is defined
+
+  // Update current time
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+ 
+  if (!currentStaffMember || !shifts || !formatDate) {
+    return (
+      <div className="p-6 bg-gray-50 min-h-screen flex items-center justify-center">
+        <div className="text-center text-gray-600">
+          <div className="mb-4">Loading staff information...</div>
+          <div className="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto"></div>
+        </div>
+      </div>
+    );
+  }
+
+  const today = formatDate(new Date());
+  const userShifts = shifts.filter(shift => shift.staffId === currentStaffMember?.id) || [];
+  const todayShifts = userShifts.filter(shift => shift.date === today) || [];
+
+
+ 
+
+  
   const handleModifyShift = async (shiftId, updates) => {
   try {
     const { clockInTime, clockOutTime, breakDuration } = updates;
@@ -60,56 +124,14 @@ const StaffPage = () => {
   }
 };
 
-  // Load initial clock status
-  useEffect(() => {
-    const loadClockStatus = async () => {
-      if (!currentStaffMember) return;
-      
-      try {
-        // Get all clock entries for today's shifts
-        const todayEntries = await Promise.all(
-          todayShifts.map(async (shift) => {
-            const status = await clockService.getShiftStatus(currentStaffMember.id, shift.id);
-            return {
-              shiftId: shift.id,
-              status
-            };
-          })
-        );
-
-        // Update clock status for all shifts
-        const newClockStatus = {};
-        todayEntries.forEach(({shiftId, status}) => {
-          if (status) {
-            newClockStatus[shiftId] = {
-              ...status,
-              isClockedIn: !!status.clock_in_time && !status.clock_out_time,
-              canModifyShift: !!(status.clock_in_time && status.clock_out_time)
-            };
-          }
-        });
-
-        setClockStatus(newClockStatus);
-      } catch (error) {
-        console.error('Error loading clock status:', error);
-      }
-    };
-
-    loadClockStatus();
-  }, [currentStaffMember, todayShifts]); // Now todayShifts is defined
-
-  // Update current time
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+  
 
   // Handle clock actions
   const handleClockAction = async (shiftId, action) => {
     if (!currentStaffMember) return;
 
     try {
-      const result = await handleClockInOut(shiftId, action, shifts);
+      const result = await handleClockInOut(shiftId, action, shifts, currentStaffMember);
       
       // Only update local state if needed
       if (result?.shouldReloadStatus) {

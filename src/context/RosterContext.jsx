@@ -1,4 +1,11 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback
+} from 'react';
 import { staffService, shiftsService, subscriptions } from '../lib/supabaseClient';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from './AuthContext';
@@ -108,36 +115,36 @@ export const RosterProvider = ({ children }) => {
   }, [currentWeekStart, user]);
 
   // Drag and drop handlers
-  const handleDragStart = (e, staffMember) => {
+  const handleDragStart = useCallback((e, staffMember) => {
     setDraggedStaff(staffMember);
     e.dataTransfer.effectAllowed = 'move';
-  };
+  }, []);
 
-  const handleDragOver = (e) => {
+  const handleDragOver = useCallback((e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-  };
+  }, []);
 
-  const handleDrop = (e, dayIndex, timeSlot) => {
+  const handleDrop = useCallback((e, dayIndex, timeSlot) => {
     e.preventDefault();
     if (!draggedStaff) return;
 
     const weekDates = getWeekDates(currentWeekStart);
     const selectedDate = weekDates[dayIndex];
     const dateString = formatDate(selectedDate);
-    
+
     setPendingShift({
       staffId: draggedStaff.id,
       staffName: draggedStaff.name,
       date: dateString,
       startTime: timeSlot,
       role: draggedStaff.role,
-      day: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][dayIndex]
+      day: ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][dayIndex]
     });
-    
+
     setShowDurationPopup(true);
     setDraggedStaff(null);
-  };
+  }, [draggedStaff, currentWeekStart]);
 
   // Shift management
   const confirmShiftCreation = async (duration) => {
@@ -195,15 +202,16 @@ export const RosterProvider = ({ children }) => {
   };
 
   // Navigation
-  const navigateWeek = (direction) => {
+  const navigateWeek = useCallback((direction) => {
     const newWeekStart = new Date(currentWeekStart);
     newWeekStart.setDate(newWeekStart.getDate() + (direction * 7));
     setCurrentWeekStart(newWeekStart);
-  };
+  }, [currentWeekStart]);
 
-  const goToCurrentWeek = () => {
+  const goToCurrentWeek = useCallback(() => {
     setCurrentWeekStart(getWeekStart(new Date()));
-  };
+  }, []);
+
 
   // Get shifts for specific time slot
   const getShiftsForTimeSlot = (dayIndex, timeSlot) => {
@@ -261,8 +269,7 @@ export const RosterProvider = ({ children }) => {
     }
   };
 
-  const value = {
-    // State
+   const value = useMemo(() => ({
     staff,
     shifts,
     draggedStaff,
@@ -271,15 +278,13 @@ export const RosterProvider = ({ children }) => {
     showDurationPopup,
     pendingShift,
     shiftDuration,
-    
-    // Setters
+
     setStaff,
     setServiceView,
     setShowDurationPopup,
     setPendingShift,
     setShiftDuration,
-    
-    // Functions
+
     handleDragStart,
     handleDragOver,
     handleDrop,
@@ -291,10 +296,22 @@ export const RosterProvider = ({ children }) => {
     getWeekDates,
     formatDate,
     addNewStaff,
-    
-    // Data transformers
     dataTransformers
-  };
+  }), [
+    staff,
+    shifts,
+    draggedStaff,
+    currentWeekStart,
+    serviceView,
+    showDurationPopup,
+    pendingShift,
+    shiftDuration,
+    handleDragStart,
+    handleDragOver,
+    handleDrop,
+    navigateWeek,
+    goToCurrentWeek
+  ]);
 
   return (
     <RosterContext.Provider value={value}>

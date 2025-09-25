@@ -43,6 +43,7 @@ const AdminPage = () => {
     addShift // Assuming you have this function in your context
   } = useRoster();
 
+
   // Modal state
   const [showDurationModal, setShowDurationModal] = useState(false);
   const [pendingShift, setPendingShift] = useState(null);

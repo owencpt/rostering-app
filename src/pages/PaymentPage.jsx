@@ -28,6 +28,14 @@ const mockClockEntries = [
 ];
 
 const PaymentPage = () => {
+
+  // useEffect(() => {
+  //   console.log('=== PaymentPage Debug ===', {
+  //     mockStaffLength: mockStaff.length,
+  //     mockClockEntriesLength: mockClockEntries.length
+  //   });
+  // }, []);
+
   const [selectedPayPeriod, setSelectedPayPeriod] = useState('2025-01-1');
 
   const getCurrentPayPeriodId = () => {
