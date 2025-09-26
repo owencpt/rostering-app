@@ -438,6 +438,49 @@ export const clockService = {
     };
   },
 
+  async updateClockEntry(entryId, clockInTime, clockOutTime, totalBreakMinutes = null) {
+  const updates = {};
+  
+  if (clockInTime) {
+    updates.clock_in_time = clockInTime;
+  }
+  
+  if (clockOutTime) {
+    updates.clock_out_time = clockOutTime;
+  }
+  
+  if (totalBreakMinutes !== null) {
+    updates.total_break_duration_minutes = totalBreakMinutes;
+  }
+
+  const { data, error } = await supabase
+    .from('clock_entries')
+    .update(updates)
+    .eq('id', entryId)
+    .select(`
+      *,
+      staff:staff_id (
+        id,
+        name,
+        email,
+        role,
+        avatar,
+        base_pay
+      ),
+      shift:shift_id (
+        id,
+        date,
+        start_time,
+        end_time,
+        role
+      )
+    `)
+    .single();
+
+  if (error) throw error;
+  return data;
+},
+
     async getClockEntries(startDate, endDate) {
     const { data, error } = await supabase
       .from('clock_entries')

@@ -1,86 +1,40 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-
-// Mock data - will come from context later
-const mockStaff = [
-  { id: 1, name: 'John Doe', role: 'admin', avatar: 'JD', base_pay: 25.00 },
-  { id: 2, name: 'Jane Smith', role: 'server', avatar: 'JS', base_pay: 18.50 },
-  { id: 3, name: 'Mike Johnson', role: 'chef', avatar: 'MJ', base_pay: 22.00 }
-];
-
-const mockClockEntries = [
-  {
-    id: 1,
-    staff_id: 2,
-    date: '2025-01-15',
-    clock_in_time: '2025-01-15T09:00:00Z',
-    clock_out_time: '2025-01-15T17:00:00Z',
-    total_break_duration_minutes: 30
-  },
-  {
-    id: 2,
-    staff_id: 3,
-    date: '2025-01-15',
-    clock_in_time: '2025-01-15T10:00:00Z',
-    clock_out_time: '2025-01-15T18:00:00Z',
-    total_break_duration_minutes: 45
-  }
-];
+import { usePayment } from '../context/PaymentContext';
+import { useRoster } from '../context/RosterContext';
 
 const PaymentPage = () => {
+  const {
+    selectedPayPeriod,
+    setSelectedPayPeriod,
+    generatePayPeriods,
+    calculatePayrollData,
+    calculateTotals,
+    getCurrentPayPeriodId,
+    clockEntries
+  } = usePayment();
 
-  // useEffect(() => {
-  //   console.log('=== PaymentPage Debug ===', {
-  //     mockStaffLength: mockStaff.length,
-  //     mockClockEntriesLength: mockClockEntries.length
-  //   });
-  // }, []);
+  const { staff } = useRoster();
+  const [payrollData, setPayrollData] = useState([]);
+  const [totals, setTotals] = useState({ totalGross: 0, totalHours: 0, employeeCount: 0 });
+  const [loading, setLoading] = useState(true);
 
-  const [selectedPayPeriod, setSelectedPayPeriod] = useState('2025-01-1');
-
-  const getCurrentPayPeriodId = () => {
-    const today = new Date();
-    const day = today.getDate();
-    const year = today.getFullYear();
-    const month = (today.getMonth() + 1).toString().padStart(2, "0");
-    return day <= 14 ? `${year}-${month}-1` : `${year}-${month}-15`;
-  };
-
-  const generatePayPeriods = () => {
-    const periods = [];
-    const currentDate = new Date();
-
-    for (let i = 5; i >= -6; i--) {
-      const baseDate = new Date(
-        currentDate.getFullYear(),
-        currentDate.getMonth() - Math.floor(i / 2),
-        1
-      );
-
-      if (i % 2 === 0 || i === 5) {
-        const start = new Date(baseDate.getFullYear(), baseDate.getMonth(), 1);
-        const end = new Date(baseDate.getFullYear(), baseDate.getMonth(), 14);
-        periods.push({
-          id: `${baseDate.getFullYear()}-${(baseDate.getMonth() + 1).toString().padStart(2, "0")}-1`,
-          start,
-          end,
-          label: `${start.toLocaleDateString("en-US", { month: "short" })} 1-14, ${start.getFullYear()}`,
-        });
-      }
-
-      if (i % 2 !== 0 || i === 5) {
-        const start = new Date(baseDate.getFullYear(), baseDate.getMonth(), 15);
-        const end = new Date(baseDate.getFullYear(), baseDate.getMonth() + 1, 0);
-        periods.push({
-          id: `${baseDate.getFullYear()}-${(baseDate.getMonth() + 1).toString().padStart(2, "0")}-15`,
-          start,
-          end,
-          label: `${start.toLocaleDateString("en-US", { month: "short" })} 15-${end.getDate()}, ${start.getFullYear()}`,
-        });
+  useEffect(() => {
+    if (staff.length > 0) {
+      setLoading(true);
+      try {
+        const calculatedPayroll = calculatePayrollData(staff);
+        const calculatedTotals = calculateTotals(calculatedPayroll);
+        
+        setPayrollData(calculatedPayroll);
+        setTotals(calculatedTotals);
+      } catch (error) {
+        console.error('Error calculating payroll:', error);
+      } finally {
+        setLoading(false);
       }
     }
-    return periods.sort((a, b) => a.start - b.start);
-  };
+  }, [staff, calculatePayrollData, calculateTotals, selectedPayPeriod, clockEntries]);
 
   const payPeriods = generatePayPeriods();
   const currentIndex = payPeriods.findIndex((p) => p.id === selectedPayPeriod);
@@ -95,58 +49,22 @@ const PaymentPage = () => {
       setSelectedPayPeriod(payPeriods[currentIndex + 1].id);
   };
 
-  // Mock payroll calculation
-  const calculateStaffPayroll = (staffMember, payPeriod) => {
-    const staffEntries = mockClockEntries.filter(entry => entry.staff_id === staffMember.id);
-    
-    let totalHours = 0;
-    let totalBreakMinutes = 0;
-    let grossPay = 0;
-
-    staffEntries.forEach(entry => {
-      const clockIn = new Date(entry.clock_in_time);
-      const clockOut = new Date(entry.clock_out_time);
-      const hoursWorked = (clockOut - clockIn) / (1000 * 60 * 60);
-      const breakHours = (entry.total_break_duration_minutes || 0) / 60;
-      const payableHours = Math.max(0, hoursWorked - breakHours);
-
-      totalHours += hoursWorked;
-      totalBreakMinutes += entry.total_break_duration_minutes || 0;
-      grossPay += payableHours * staffMember.base_pay;
-    });
-
-    const breakHours = totalBreakMinutes / 60;
-    const totalPayableHours = Math.max(0, totalHours - breakHours);
-
-    return {
-      totalHours: totalHours.toFixed(2),
-      breakHours: breakHours.toFixed(2),
-      payableHours: totalPayableHours.toFixed(2),
-      grossPay: grossPay.toFixed(2),
-      shiftsWorked: staffEntries.length,
-      hoursBreakdown: {
-        weekday: totalPayableHours.toFixed(2),
-        weekdayAfter10pm: '0.00',
-        saturday: '0.00',
-        sunday: '0.00',
-        publicHoliday: '0.00',
-      }
-    };
+  const goToCurrentPeriod = () => {
+    const currentPeriodId = getCurrentPayPeriodId();
+    setSelectedPayPeriod(currentPeriodId);
   };
 
-  const payrollData = mockStaff.map((staffMember) => ({
-    ...staffMember,
-    payroll: calculateStaffPayroll(staffMember, activePeriod),
-  }));
-
-  const totals = payrollData.reduce(
-    (acc, staff) => ({
-      totalGross: acc.totalGross + parseFloat(staff.payroll.grossPay),
-      totalHours: acc.totalHours + parseFloat(staff.payroll.payableHours),
-      employeeCount: acc.employeeCount + (staff.payroll.shiftsWorked > 0 ? 1 : 0),
-    }),
-    { totalGross: 0, totalHours: 0, employeeCount: 0 }
-  );
+  if (loading && staff.length === 0) {
+    return (
+      <div className="p-6 bg-gray-50 min-h-screen">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex justify-center items-center h-64">
+            <div className="text-lg text-gray-600">Loading payroll data...</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
@@ -191,7 +109,7 @@ const PaymentPage = () => {
                   
                   return !isCurrentPeriod && (
                     <button
-                      onClick={() => setSelectedPayPeriod(currentPeriodId)}
+                      onClick={goToCurrentPeriod}
                       className="mt-2 px-3 py-1 bg-white/20 hover:bg-white/30 rounded-full text-xs font-medium transition-colors"
                     >
                       Go to Current Period
@@ -220,56 +138,110 @@ const PaymentPage = () => {
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="p-6 border-b border-gray-200">
             <h2 className="text-xl font-semibold">Staff Payroll Details</h2>
+            {payrollData.length === 0 && !loading && (
+              <p className="text-gray-500 text-sm mt-1">No clock entries found for this pay period</p>
+            )}
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Staff Member</th>
-                  <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">Weekday Hours</th>
-                  <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">After 10pm Hours</th>
-                  <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">Saturday Hours</th>
-                  <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">Sunday Hours</th>
-                  <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">Holiday Hours</th>
-                  <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">Total Hours</th>
-                  <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">Gross Pay</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {payrollData.map((staffMember) => (
-                  <tr key={staffMember.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center">
-                        <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-semibold mr-3">
-                          {staffMember.avatar}
-                        </div>
-                        <div>
-                          <div className="font-medium text-gray-900">{staffMember.name}</div>
-                          <div className="text-sm text-gray-500 capitalize">{staffMember.role}</div>
-                        </div>
-                      </div>
-                    </td>
-
-                    <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.weekday}h</td>
-                    <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.weekdayAfter10pm}h</td>
-                    <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.saturday}h</td>
-                    <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.sunday}h</td>
-                    <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.publicHoliday}h</td>
-
-                    <td className="px-6 py-4 text-center">
-                      <div className="text-sm">
-                        <div className="font-medium text-gray-900">{staffMember.payroll.payableHours}h</div>
-                        <div className="text-gray-500">{staffMember.payroll.breakHours}h breaks</div>
-                      </div>
-                    </td>
-
-                    <td className="px-6 py-4 text-center font-semibold">${staffMember.payroll.grossPay}</td>
+          {loading ? (
+            <div className="p-8 text-center">
+              <div className="text-gray-600">Calculating payroll...</div>
+            </div>
+          ) : payrollData.length === 0 ? (
+            <div className="p-8 text-center text-gray-500">
+              No staff members worked during this pay period
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900">Staff Member</th>
+                    <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">
+                      Weekday Hours
+                    </th>
+                    <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">
+                      After 10pm Hours
+                    </th>
+                    <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">
+                      Saturday Hours
+                    </th>
+                    <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">
+                      Sunday Hours
+                    </th>
+                    <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">
+                      Holiday Hours
+                    </th>
+                    <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">Total Hours</th>
+                    <th className="px-6 py-4 text-center text-sm font-semibold text-gray-900">Gross Pay</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {payrollData.map((staffMember) => {
+                    // Only show staff who actually worked during this period
+                    if (staffMember.payroll.shiftsWorked === 0) return null;
+
+                    return (
+                      <tr key={staffMember.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center">
+                            <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-semibold mr-3">
+                              {staffMember.avatar}
+                            </div>
+                            <div>
+                              <div className="font-medium text-gray-900">{staffMember.name}</div>
+                              <div className="text-sm text-gray-500 capitalize">{staffMember.role}</div>
+                              <div className="text-xs text-gray-400">Base: ${staffMember.payroll.basePay}/hr</div>
+                            </div>
+                          </div>
+                        </td>
+
+                        <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.weekday}h</td>
+                        <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.weekdayAfter10pm}h</td>
+                        <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.saturday}h</td>
+                        <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.sunday}h</td>
+                        <td className="px-6 py-4 text-center">{staffMember.payroll.hoursBreakdown.publicHoliday}h</td>
+
+                        <td className="px-6 py-4 text-center">
+                          <div className="text-sm">
+                            <div className="font-medium text-gray-900">{staffMember.payroll.payableHours}h</div>
+                            <div className="text-gray-500">{staffMember.payroll.breakHours}h breaks</div>
+                            <div className="text-xs text-gray-400">{staffMember.payroll.shiftsWorked} shifts</div>
+                          </div>
+                        </td>
+
+                        <td className="px-6 py-4 text-center">
+                          <div className="font-semibold text-lg">${staffMember.payroll.grossPay}</div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot className="bg-gray-50 border-t-2 border-gray-200">
+                  <tr>
+                    <td className="px-6 py-4 font-semibold text-gray-900">TOTALS</td>
+                    <td className="px-6 py-4 text-center font-medium text-gray-600">
+                      {payrollData.reduce((sum, staff) => sum + parseFloat(staff.payroll.hoursBreakdown.weekday || 0), 0).toFixed(2)}h
+                    </td>
+                    <td className="px-6 py-4 text-center font-medium text-gray-600">
+                      {payrollData.reduce((sum, staff) => sum + parseFloat(staff.payroll.hoursBreakdown.weekdayAfter10pm || 0), 0).toFixed(2)}h
+                    </td>
+                    <td className="px-6 py-4 text-center font-medium text-gray-600">
+                      {payrollData.reduce((sum, staff) => sum + parseFloat(staff.payroll.hoursBreakdown.saturday || 0), 0).toFixed(2)}h
+                    </td>
+                    <td className="px-6 py-4 text-center font-medium text-gray-600">
+                      {payrollData.reduce((sum, staff) => sum + parseFloat(staff.payroll.hoursBreakdown.sunday || 0), 0).toFixed(2)}h
+                    </td>
+                    <td className="px-6 py-4 text-center font-medium text-gray-600">
+                      {payrollData.reduce((sum, staff) => sum + parseFloat(staff.payroll.hoursBreakdown.publicHoliday || 0), 0).toFixed(2)}h
+                    </td>
+                    <td className="px-6 py-4 text-center font-semibold text-gray-900">{totals.totalHours.toFixed(2)}h</td>
+                    <td className="px-6 py-4 text-center font-bold text-lg text-green-600">${totals.totalGross.toLocaleString()}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </div>

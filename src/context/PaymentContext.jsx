@@ -14,6 +14,7 @@ const PaymentContext = createContext(null);
 export const PaymentProvider = ({ children }) => {
   const { user } = useAuth();
   const [clockEntries, setClockEntries] = useState([]);
+  const [loading, setLoading] = useState(false);
   const [selectedPayPeriod, setSelectedPayPeriod] = useState(
     getCurrentPayPeriodId()
   );
@@ -25,6 +26,33 @@ export const PaymentProvider = ({ children }) => {
     const month = (today.getMonth() + 1).toString().padStart(2, "0");
     return day <= 14 ? `${year}-${month}-1` : `${year}-${month}-15`;
   }
+
+  // Load clock entries when pay period changes
+  useEffect(() => {
+    if (!user) return;
+
+    const loadClockEntries = async () => {
+      try {
+        setLoading(true);
+        const payPeriods = generatePayPeriods();
+        const selectedPeriod = payPeriods.find(p => p.id === selectedPayPeriod);
+        
+        if (selectedPeriod) {
+          const startDate = selectedPeriod.start.toISOString().split('T')[0];
+          const endDate = selectedPeriod.end.toISOString().split('T')[0];
+          const data = await clockService.getClockEntries(startDate, endDate);
+          setClockEntries(data);
+        }
+      } catch (error) {
+        console.error('Error loading clock entries:', error);
+        setClockEntries([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadClockEntries();
+  }, [user, selectedPayPeriod]);
 
   // ---------------------------
   // Helpers & Memoized Functions
@@ -234,6 +262,7 @@ export const PaymentProvider = ({ children }) => {
       clockEntries,
       selectedPayPeriod,
       setSelectedPayPeriod,
+      loading,
       generatePayPeriods,
       calculatePayrollData,
       calculateTotals,
@@ -245,6 +274,7 @@ export const PaymentProvider = ({ children }) => {
     [
       clockEntries,
       selectedPayPeriod,
+      loading,
       generatePayPeriods,
       calculatePayrollData,
       calculateTotals,
