@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { Calendar, Users, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Calendar, Users, ChevronLeft, ChevronRight, X, Mail, Send } from 'lucide-react';
 import { useRoster } from '../context/RosterContext';
 import { useAuth } from '../context/AuthContext';
-import { shiftsService, dataTransformers } from '../lib/supabaseClient'; // Import Supabase services
+import { shiftsService, dataTransformers, supabase } from '../lib/supabaseClient'; // Import Supabase services
 import DurationModal from '../components/DurationModal'; // Import the modal component
 
 const timeSlots = Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`);
@@ -48,6 +48,10 @@ const AdminPage = () => {
   const [showDurationModal, setShowDurationModal] = useState(false);
   const [pendingShift, setPendingShift] = useState(null);
   const [draggedStaff, setDraggedStaff] = useState(null);
+  
+  // Email sending state
+  const [isEmailSending, setIsEmailSending] = useState(false);
+  const [emailStatus, setEmailStatus] = useState({ success: false, message: '' });
 
   const slotRanges = {
     lunch: [9, 14],
@@ -165,6 +169,55 @@ const AdminPage = () => {
     setPendingShift(null);
   };
 
+  // Email functionality
+  const handleSendRosterEmails = async () => {
+    setIsEmailSending(true);
+    setEmailStatus({ success: false, message: '' });
+
+    try {
+      // Prepare the week date range for the email
+      const weekStartDate = formatDate(weekDates[0]);
+      const weekEndDate = formatDate(weekDates[6]);
+
+      // Call the Supabase edge function
+      const { data, error } = await supabase.functions.invoke('send-roster-emails', {
+        body: {
+          weekStartDate,
+          weekEndDate,
+          weekDates: weekDates.map(date => formatDate(date))
+        }
+      });
+
+      if (error) {
+        console.error('Error calling edge function:', error);
+        setEmailStatus({ 
+          success: false, 
+          message: `Failed to send emails: ${error.message}` 
+        });
+      } else {
+        console.log('Email function response:', data);
+        setEmailStatus({ 
+          success: true, 
+          message: `Successfully sent roster emails to ${data.emailsSent || 'all'} staff members!` 
+        });
+      }
+
+    } catch (error) {
+      console.error('Error sending roster emails:', error);
+      setEmailStatus({ 
+        success: false, 
+        message: `Error sending emails: ${error.message}` 
+      });
+    } finally {
+      setIsEmailSending(false);
+      
+      // Clear status message after 5 seconds
+      setTimeout(() => {
+        setEmailStatus({ success: false, message: '' });
+      }, 5000);
+    }
+  };
+
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
       <div className="max-w-7xl mx-auto">
@@ -267,7 +320,46 @@ const AdminPage = () => {
                       )}
                     </div>
                   </div>
+                  
+                  {/* Email Button */}
+                  <div className="flex items-center space-x-3">
+                    <button
+                      onClick={handleSendRosterEmails}
+                      disabled={isEmailSending}
+                      className={`px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center space-x-2 ${
+                        isEmailSending
+                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                          : 'bg-green-600 text-white hover:bg-green-700 hover:shadow-md'
+                      }`}
+                      title="Send roster emails to all staff for this week"
+                    >
+                      {isEmailSending ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400"></div>
+                          <span>Sending...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-4 h-4" />
+                          <span>Email Roster</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
+
+                {/* Email Status Message */}
+                {emailStatus.message && (
+                  <div className={`mb-4 p-3 rounded-lg flex items-center space-x-2 ${
+                    emailStatus.success 
+                      ? 'bg-green-100 text-green-800 border border-green-200' 
+                      : 'bg-red-100 text-red-800 border border-red-200'
+                  }`}>
+                    <Mail className="w-4 h-4 flex-shrink-0" />
+                    <span className="text-sm font-medium">{emailStatus.message}</span>
+                  </div>
+                )}
+                
                 <div className="flex space-x-2 mt-2">
                   <button
                     onClick={() => setServiceView('lunch')}
